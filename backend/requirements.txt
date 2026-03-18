@@ -1,0 +1,10 @@
+fastapi
+uvicorn
+motor
+pymongo
+pandas
+scipy
+pydantic
+python-dotenv
+openai
+langchain
