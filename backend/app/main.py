@@ -16,20 +16,13 @@ from .services.semantic_mapper import SemanticMapper
 from .services.stats_engine import StatsEngine
 from .services.db_client import DatabaseClient
 
-# Person 3's LLM Handlers (To be implemented by Person 3)
-try:
-    from .services.insight import build_insight
-    from .services.mongo_executor import MongoExecutor
-    from .services.planner import build_plan
-except ImportError:
-    # Fallback placeholders in case Person 3 hasn't committed their files yet
-    def build_plan(*args, **kwargs): return None, []
-    def build_insight(*args, **kwargs): return None
-    class MongoExecutor:
-        def run_plan_with_repair(self, *args, **kwargs): return None
+# Person 3's LLM Handlers
+from .services.insight import build_insight
+from .services.mongo_executor import MongoExecutor
+from .services.planner import build_plan
 
 settings = get_settings()
-app = FastAPI(title="ZwickRoell Data Whisperer API - Merged")
+app = FastAPI(title="ZwickRoell Data Whisperer API - Full Integration")
 
 app.add_middleware(
     CORSMiddleware,
@@ -87,33 +80,12 @@ def process_query(req: PlannerRequest) -> InsightResponse:
     """
     plan, candidates = build_plan(req.question, req.context)
     
-    if plan is None:
-        # Provide the safe Mock response until LLMs are wired
-        return InsightResponse(
-            summary_3_sentences=[
-                "The LLM Orchestration is not yet fully wired.", 
-                "Your request reached the backend and semantic mapping was initialized.", 
-                "Person 3 needs to complete the MongoExecutor and LangChain graph files."
-            ],
-            anomaly_notes=[],
-            recommendation="Connect the OpenAI/Anthropic APIs in `services/planner.py`.",
-            follow_up_questions=["Test maximum force trend?", "Verify backend logs?"],
-            chart_config={},
-            audit_log=["Received query: " + req.question, "Planner returned None (Mock Mode)"]
-        )
-
+    # Execute the MongoDB search with Plan
     run_resp = executor.run_plan_with_repair(plan, settings.max_query_repairs, semantic_candidates=candidates)
     
-    if run_resp is None:
-        return InsightResponse(
-            summary_3_sentences=["Plan was created, but execution failed."],
-            anomaly_notes=[],
-            recommendation="Review the generated Mongo Query.",
-            follow_up_questions=[],
-            chart_config={},
-            audit_log=[f"Generated Plan: {plan.intent}"]
-        )
-
-    stats_output = {} # Mock stats aggregation based on rows
+    # Mocking stats momentarily until LLM properly builds it
+    stats_output = {} 
+    
+    # Generate human textual explanation
     final_insight = build_insight(plan, run_resp.rows, stats_output)
     return final_insight

@@ -4,7 +4,6 @@ import { ChatPanel, type ChatMessage, type ChartConfig, type ReasoningData } fro
 import { ChartDisplay } from "@/components/dashboard/ChartDisplay";
 import { ReasoningPanel } from "@/components/dashboard/ReasoningPanel";
 import { ReportModal } from "@/components/dashboard/ReportModal";
-
 // Simulated AI responses for demo
 const demoResponses: Record<string, { content: string; chartConfig?: ChartConfig; reasoning?: ReasoningData; followUps: string[] }> = {
   default: {
@@ -68,7 +67,7 @@ export default function Index() {
     setIsLoading(true);
 
     try {
-      const response = await fetch("http://localhost:8000/query", {
+      const response = await fetch(`${import.meta.env.VITE_API_URL}/query`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -119,7 +118,7 @@ export default function Index() {
       const errorMsg: ChatMessage = {
         id: crypto.randomUUID(),
         role: "assistant",
-        content: "🚨 Failed to connect to the backend API (`http://localhost:8000/query`). Please ensure the FastAPI server is running.",
+        content: "🚨 Failed to connect to the backend API (" + import.meta.env.VITE_API_URL + "/query). Please ensure the FastAPI server is running.",
         timestamp: new Date(),
       };
       setMessages((prev) => [...prev, errorMsg]);
