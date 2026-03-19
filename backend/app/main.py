@@ -77,3 +77,43 @@ def query_run(payload: QueryRunRequest) -> QueryRunResponse:
 def insight_generate(payload: InsightRequest) -> InsightResponse:
     # Here Person 3 can wire up Person 2's stats_engine using the data!
     return build_insight(payload.plan, payload.rows, payload.stats)
+
+
+@app.post("/query", response_model=InsightResponse)
+def process_query(req: PlannerRequest) -> InsightResponse:
+    """
+    Master Orchestration Endpoint for the Frontend.
+    Chains the Plan -> Run -> Insight flow together.
+    """
+    plan, candidates = build_plan(req.question, req.context)
+    
+    if plan is None:
+        # Provide the safe Mock response until LLMs are wired
+        return InsightResponse(
+            summary_3_sentences=[
+                "The LLM Orchestration is not yet fully wired.", 
+                "Your request reached the backend and semantic mapping was initialized.", 
+                "Person 3 needs to complete the MongoExecutor and LangChain graph files."
+            ],
+            anomaly_notes=[],
+            recommendation="Connect the OpenAI/Anthropic APIs in `services/planner.py`.",
+            follow_up_questions=["Test maximum force trend?", "Verify backend logs?"],
+            chart_config={},
+            audit_log=["Received query: " + req.question, "Planner returned None (Mock Mode)"]
+        )
+
+    run_resp = executor.run_plan_with_repair(plan, settings.max_query_repairs, semantic_candidates=candidates)
+    
+    if run_resp is None:
+        return InsightResponse(
+            summary_3_sentences=["Plan was created, but execution failed."],
+            anomaly_notes=[],
+            recommendation="Review the generated Mongo Query.",
+            follow_up_questions=[],
+            chart_config={},
+            audit_log=[f"Generated Plan: {plan.intent}"]
+        )
+
+    stats_output = {} # Mock stats aggregation based on rows
+    final_insight = build_insight(plan, run_resp.rows, stats_output)
+    return final_insight

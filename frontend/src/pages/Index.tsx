@@ -55,7 +55,7 @@ export default function Index() {
   const [rightCollapsed, setRightCollapsed] = useState(false);
   const [reportOpen, setReportOpen] = useState(false);
 
-  const handleSendMessage = useCallback((text: string) => {
+  const handleSendMessage = useCallback(async (text: string) => {
     if (!text.trim()) return;
 
     const userMsg: ChatMessage = {
@@ -67,23 +67,65 @@ export default function Index() {
     setMessages((prev) => [...prev, userMsg]);
     setIsLoading(true);
 
-    // Simulate AI response
-    setTimeout(() => {
-      const resp = getResponse(text);
+    try {
+      const response = await fetch("http://localhost:8000/query", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ question: text, context: {} }),
+      });
+
+      if (!response.ok) {
+        throw new Error(`API Error: ${response.status}`);
+      }
+
+      const data = await response.json();
+      
+      // Map FastAPI InsightResponse to UI Format
+      // data: { summary_3_sentences: [], anomaly_notes: [], recommendation: "", follow_up_questions: [], chart_config: {}, audit_log: [] }
+      
+      const markdownContent = data.summary_3_sentences.join(" ") + 
+                              "\n\n**Recommendation:** " + data.recommendation;
+
+      const uiReasoning: ReasoningData = {
+        intent: "Backend Analysis",
+        dataUsed: "Live MongoDB Data",
+        metric: "Auto-computed",
+        method: "LangChain Pipeline",
+        chartType: "Dynamic",
+        auditLog: data.audit_log,
+        anomalies: data.anomaly_notes,
+        recommendations: data.recommendation,
+        stats: {} // Could map from backend if provided in a later PR
+      };
+
       const aiMsg: ChatMessage = {
         id: crypto.randomUUID(),
         role: "assistant",
-        content: resp.content,
+        content: markdownContent,
         timestamp: new Date(),
-        chartConfig: resp.chartConfig,
-        reasoning: resp.reasoning,
-        followUps: resp.followUps,
+        chartConfig: Object.keys(data.chart_config).length > 0 ? (data.chart_config as ChartConfig) : undefined,
+        reasoning: uiReasoning,
+        followUps: data.follow_up_questions,
       };
+
       setMessages((prev) => [...prev, aiMsg]);
-      if (resp.chartConfig) setActiveChart(resp.chartConfig);
-      if (resp.reasoning) setActiveReasoning(resp.reasoning);
+      if (aiMsg.chartConfig) setActiveChart(aiMsg.chartConfig);
+      setActiveReasoning(uiReasoning);
+
+    } catch (error) {
+      console.error("Fetch failed:", error);
+      const errorMsg: ChatMessage = {
+        id: crypto.randomUUID(),
+        role: "assistant",
+        content: "🚨 Failed to connect to the backend API (`http://localhost:8000/query`). Please ensure the FastAPI server is running.",
+        timestamp: new Date(),
+      };
+      setMessages((prev) => [...prev, errorMsg]);
+    } finally {
       setIsLoading(false);
-    }, 1800);
+    }
   }, []);
 
   const handleQuerySelect = (query: string) => {
