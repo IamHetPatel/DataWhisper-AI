@@ -62,8 +62,7 @@ def planner_plan(payload: PlannerRequest) -> PlannerResponse:
 
 @app.post("/query/run", response_model=QueryRunResponse)
 def query_run(payload: QueryRunRequest) -> QueryRunResponse:
-    candidates = payload.semantic_candidates or None
-    return executor.run_plan_with_repair(payload.plan, payload.max_repairs, semantic_candidates=candidates)
+    return executor.run_plan(payload.plan, payload.max_repairs)
 
 
 @app.post("/insight/generate", response_model=InsightResponse)
@@ -81,7 +80,7 @@ def process_query(req: PlannerRequest) -> InsightResponse:
     plan, candidates = build_plan(req.question, req.context)
     
     # Execute the MongoDB search with Plan
-    run_resp = executor.run_plan_with_repair(plan, settings.max_query_repairs, semantic_candidates=candidates)
+    run_resp = executor.run_plan(plan, settings.max_query_repairs)
     
     # Mocking stats momentarily until LLM properly builds it
     stats_output = {} 

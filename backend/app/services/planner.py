@@ -358,7 +358,7 @@ def _build_plan_llm(question: str) -> QueryPlannerSchema | None:
     return _validate_and_normalize_plan(raw, question)
 
 
-def build_query_plan(question: str, context: dict[str, Any] | None = None) -> QueryPlannerSchema:
+def build_plan(question: str, context: dict[str, Any] | None = None) -> tuple[QueryPlannerSchema, list[dict[str, Any]]]:
     """Build a QueryPlannerSchema from a natural language question.
 
     Tries OpenAI (with resolve_schema_terms tool use) first,
@@ -368,6 +368,6 @@ def build_query_plan(question: str, context: dict[str, Any] | None = None) -> Qu
     if settings.planner_mode.lower() == "llm":
         llm_plan = _build_plan_llm(question)
         if llm_plan is not None:
-            return llm_plan
+            return llm_plan, []
 
-    return _build_plan_heuristic(question, context)
+    return _build_plan_heuristic(question, context), []
