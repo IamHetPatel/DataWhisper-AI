@@ -1,0 +1,116 @@
+import { useState, useCallback } from "react";
+import { LeftSidebar } from "@/components/dashboard/LeftSidebar";
+import { ChatPanel, type ChatMessage, type ChartConfig, type ReasoningData } from "@/components/dashboard/ChatPanel";
+import { ChartDisplay } from "@/components/dashboard/ChartDisplay";
+import { ReasoningPanel } from "@/components/dashboard/ReasoningPanel";
+import { ReportModal } from "@/components/dashboard/ReportModal";
+
+// Simulated AI responses for demo
+const demoResponses: Record<string, { content: string; chartConfig?: ChartConfig; reasoning?: ReasoningData; followUps: string[] }> = {
+  default: {
+    content: "Based on your test data, I've analyzed **847 tensile test records** from the past 6 months.\n\nThe mean maximum force across all specimens is **714.2 N** (σ = 18.7 N). Machine A shows slightly higher consistency with a CV of 2.4% compared to Machine B's 2.9%.\n\nI've plotted the force-strain curve for the latest batch below.",
+    followUps: ["Compare last 7 days?", "Check anomalies?", "Filter by material?", "Compare another machine?"],
+    reasoning: {
+      intent: "Trend Analysis",
+      dataUsed: "Tests, Values (last 6 months)",
+      metric: "Maximum Force (N)",
+      method: "Mean, Std Dev, Linear Regression",
+      chartType: "Area Chart",
+      auditLog: ["Queried tests — 847 records", "Filtered Oct 2025 – Mar 2026", "Joined values on test_id", "Computed statistics", "Generated trend line"],
+      anomalies: ["Sample #412 — force 45% below mean", "Machine B batch Dec-15 — elevated std dev"],
+      recommendations: "Inspect Machine B calibration logs for December. Re-test sample #412.",
+      stats: { mean: 714.2, std: 18.7, count: 847, min: 392, max: 745 },
+    },
+  },
+  compare: {
+    content: "**Machine A vs Machine B — Comparison Complete**\n\nAcross 5 matched sample pairs:\n- Machine A mean: **717.6 N**\n- Machine B mean: **701.0 N**\n\nMachine A delivers **2.4% higher** maximum force on average. The difference is statistically significant (p < 0.05).",
+    chartConfig: { type: "bar", title: "Maximum Force Comparison (Machine A vs B)", data: [], xKey: "name", yKey: "machineA" },
+    followUps: ["Show individual samples?", "Check Machine B calibration?", "Run t-test details?", "Filter by material type?"],
+    reasoning: {
+      intent: "Comparison",
+      dataUsed: "Tests (Machine A, Machine B)",
+      metric: "Maximum Force (N)",
+      method: "Paired comparison, t-test",
+      chartType: "Bar Chart",
+      auditLog: ["Selected matched pairs", "Computed per-machine stats", "Ran paired t-test (p=0.032)", "Generated comparison chart"],
+      anomalies: [],
+      recommendations: "Machine B shows consistent under-performance. Schedule calibration check.",
+      stats: { "A mean": 717.6, "B mean": 701.0, "p-value": 0.032, delta: 16.6, pairs: 5 },
+    },
+  },
+};
+
+function getResponse(query: string) {
+  const lower = query.toLowerCase();
+  if (lower.includes("compare") || lower.includes("machine")) return demoResponses.compare;
+  return demoResponses.default;
+}
+
+export default function Index() {
+  const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const [isLoading, setIsLoading] = useState(false);
+  const [activeChart, setActiveChart] = useState<ChartConfig | null>(null);
+  const [activeReasoning, setActiveReasoning] = useState<ReasoningData | null>(null);
+  const [leftCollapsed, setLeftCollapsed] = useState(false);
+  const [rightCollapsed, setRightCollapsed] = useState(false);
+  const [reportOpen, setReportOpen] = useState(false);
+
+  const handleSendMessage = useCallback((text: string) => {
+    if (!text.trim()) return;
+
+    const userMsg: ChatMessage = {
+      id: crypto.randomUUID(),
+      role: "user",
+      content: text,
+      timestamp: new Date(),
+    };
+    setMessages((prev) => [...prev, userMsg]);
+    setIsLoading(true);
+
+    // Simulate AI response
+    setTimeout(() => {
+      const resp = getResponse(text);
+      const aiMsg: ChatMessage = {
+        id: crypto.randomUUID(),
+        role: "assistant",
+        content: resp.content,
+        timestamp: new Date(),
+        chartConfig: resp.chartConfig,
+        reasoning: resp.reasoning,
+        followUps: resp.followUps,
+      };
+      setMessages((prev) => [...prev, aiMsg]);
+      if (resp.chartConfig) setActiveChart(resp.chartConfig);
+      if (resp.reasoning) setActiveReasoning(resp.reasoning);
+      setIsLoading(false);
+    }, 1800);
+  }, []);
+
+  const handleQuerySelect = (query: string) => {
+    if (query) handleSendMessage(query);
+  };
+
+  return (
+    <div className="h-screen flex overflow-hidden bg-background">
+      <LeftSidebar collapsed={leftCollapsed} onToggle={() => setLeftCollapsed((c) => !c)} onQuerySelect={handleQuerySelect} />
+
+      {/* Center: Chat + Charts */}
+      <div className="flex-1 flex flex-col min-w-0 overflow-hidden">
+        {/* Chat area */}
+        <div className="flex-1 min-h-0">
+          <ChatPanel messages={messages} isLoading={isLoading} onSendMessage={handleSendMessage} onFollowUp={handleSendMessage} />
+        </div>
+
+        {/* Chart area */}
+        {(messages.length > 0 || true) && (
+          <div className="border-t border-border p-4 shrink-0 overflow-y-auto" style={{ maxHeight: "55%" }}>
+            <ChartDisplay chart={activeChart} onGenerateReport={() => setReportOpen(true)} />
+          </div>
+        )}
+      </div>
+
+      <ReasoningPanel reasoning={activeReasoning} collapsed={rightCollapsed} onToggle={() => setRightCollapsed((c) => !c)} />
+      <ReportModal open={reportOpen} onClose={() => setReportOpen(false)} reasoning={activeReasoning} chart={activeChart} />
+    </div>
+  );
+}

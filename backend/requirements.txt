@@ -5,6 +5,7 @@ pymongo
 pandas
 scipy
 pydantic
+pydantic-settings
 python-dotenv
 openai
 langchain
