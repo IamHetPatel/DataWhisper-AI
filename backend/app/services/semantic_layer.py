@@ -19,6 +19,11 @@ class SemanticDictionary:
 
 
 def _default_helper_root() -> Path:
+    # app/data_schema/ (co-located with services/)
+    data_schema = Path(__file__).resolve().parent.parent / "data_schema"
+    if data_schema.exists():
+        return data_schema
+
     local_root = Path(__file__).resolve().parents[2] / "resources" / "uuid_helpers"
     if local_root.exists():
         return local_root

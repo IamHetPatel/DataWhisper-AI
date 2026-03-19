@@ -195,18 +195,44 @@ class MongoExecutor:
             AnalyticalOperation.standard_deviation,
             AnalyticalOperation.iqr_outlier,
         }:
-            # Unwind the values float array, then group and compute statistics
-            pipeline.append({"$unwind": "$values"})
-            # Drop NaN and null values. NaN != NaN in IEEE 754, so $eq[$values,$values]
-            # is false only for NaN. Also drops nulls and non-numeric entries.
-            pipeline.append({"$match": {
-                "$expr": {
-                    "$and": [
-                        {"$isNumber": "$values"},
-                        {"$eq": ["$values", "$values"]},
-                    ]
-                }
+            # Compute per-document stats using array operators (avoids $unwind on huge arrays)
+            pipeline.append({"$limit": 2000})
+            # Strip NaN/null from values array before computing stats (NaN != NaN in IEEE 754)
+            pipeline.append({"$project": {
+                "_id": 1,
+                "uploadDate": 1,
+                "metadata": 1,
+                "test": 1,
+                "clean_values": {
+                    "$filter": {
+                        "input": "$values",
+                        "as": "v",
+                        "cond": {"$and": [
+                            {"$isNumber": "$$v"},
+                            {"$gt": ["$$v", -1e15]},
+                            {"$lt": ["$$v", 1e15]},
+                        ]},
+                    }
+                },
             }})
+            pipeline.append({"$project": {
+                "_id": 1,
+                "uploadDate": 1,
+                "metadata": 1,
+                "test": 1,
+                "doc_avg": {"$avg": "$clean_values"},
+                "doc_min": {"$min": "$clean_values"},
+                "doc_max": {"$max": "$clean_values"},
+                "doc_std": {"$stdDevPop": "$clean_values"},
+                "doc_count": {"$size": "$clean_values"},
+            }})
+            # Drop docs where doc_avg is null/NaN/Inf
+            pipeline.append({"$match": {"$expr": {
+                "$and": [
+                    {"$gt": ["$doc_avg", -1e15]},
+                    {"$lt": ["$doc_avg", 1e15]},
+                ]
+            }}})
 
             if grouping_dim:
                 group_key: Any = f"$test.{grouping_dim}" if needs_test_join else f"${grouping_dim}"
@@ -215,25 +241,67 @@ class MongoExecutor:
 
             pipeline.append({"$group": {
                 "_id": group_key,
-                "mean": {"$avg": "$values"},
-                "stdDev": {"$stdDevPop": "$values"},
-                "count": {"$sum": 1},
-                "min": {"$min": "$values"},
-                "max": {"$max": "$values"},
+                "mean": {"$avg": "$doc_avg"},
+                "stdDev": {"$avg": "$doc_std"},
+                "count": {"$sum": "$doc_count"},
+                "min": {"$min": "$doc_min"},
+                "max": {"$max": "$doc_max"},
+                "doc_count": {"$sum": 1},
             }})
-            pipeline.append({"$sort": {"count": -1}})
+            pipeline.append({"$sort": {"doc_count": -1}})
             pipeline.append({"$limit": 50})
 
         elif op == AnalyticalOperation.linear_regression:
-            # Group by time bucket for time-series regression
-            interval = plan.analytical_engine.time_series_interval or "day"
-            group_id: Any = {"date": {"$dateTrunc": {"date": "$uploadDate", "unit": interval}}}
+            # Compute per-document average first (avoids $unwind on huge arrays)
+            pipeline.append({"$limit": 5000})
+            pipeline.append({"$project": {
+                "uploadDate": 1,
+                "metadata": 1,
+                "test": 1,
+                "clean_values": {
+                    "$filter": {
+                        "input": "$values",
+                        "as": "v",
+                        "cond": {"$and": [
+                            {"$isNumber": "$$v"},
+                            {"$gt": ["$$v", -1e15]},
+                            {"$lt": ["$$v", 1e15]},
+                        ]},
+                    }
+                },
+            }})
+            pipeline.append({"$project": {
+                "uploadDate": 1,
+                "metadata": 1,
+                "test": 1,
+                "doc_avg": {"$avg": "$clean_values"},
+            }})
+            # Drop docs where doc_avg is null/NaN/Inf
+            pipeline.append({"$match": {"$expr": {"$and": [
+                {"$gt": ["$doc_avg", -1e15]},
+                {"$lt": ["$doc_avg", 1e15]},
+            ]}}})
+            # Group by time bucket
+            interval = plan.analytical_engine.time_series_interval or "week"
+            group_id: Any = {
+                "date": {
+                    "$dateToString": {
+                        "format": "%Y-%m-%d" if interval == "day" else "%Y-%W",
+                        "date": {
+                            "$dateFromString": {
+                                "dateString": {"$substr": [{"$toString": "$uploadDate"}, 0, 19]},
+                                "onError": None,
+                            }
+                        },
+                    }
+                }
+            }
             if grouping_dim:
                 group_id["group"] = f"$test.{grouping_dim}" if needs_test_join else f"${grouping_dim}"
 
             pipeline.append({"$group": {
                 "_id": group_id,
-                "avg_value": {"$avg": {"$avg": "$values"}},
+                "avg_value": {"$avg": "$doc_avg"},
                 "count": {"$sum": 1},
             }})
             pipeline.append({"$sort": {"_id.date": 1}})
@@ -344,6 +412,15 @@ class MongoExecutor:
             ),
             expected_shape=expected_shape,
         )
+
+    def run_plan_with_repair(
+        self,
+        plan: QueryPlannerSchema,
+        max_repairs: int | None = None,
+        semantic_candidates: list | None = None,
+    ) -> QueryRunResponse:
+        """Alias used by main.py."""
+        return self.run_plan(plan, max_repairs)
 
     def run_plan(
         self,

@@ -3,7 +3,7 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PYTHON_BIN="$ROOT_DIR/.venv/bin/python"
-BACKEND_DIR="$ROOT_DIR/ai_architect_backend"
+BACKEND_DIR="$ROOT_DIR"
 
 usage() {
   echo "Usage: ./run_ai_architect.sh [all|smoke|serve|eval|dryrun]"
@@ -51,7 +51,7 @@ run_server() {
 
   echo "Starting FastAPI server on ${HOST}:${PORT}..."
   cd "$ROOT_DIR"
-  exec "$PYTHON_BIN" -m uvicorn --app-dir "$BACKEND_DIR" app.main:app --host "$HOST" --port "$PORT" --reload
+  exec "$PYTHON_BIN" -m uvicorn app.main:app --host "$HOST" --port "$PORT" --reload
 }
 
 run_eval() {

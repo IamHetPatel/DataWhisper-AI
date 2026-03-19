@@ -1,11 +1,15 @@
 import json
+import logging
 import re
 from typing import Any
 
+import anthropic
 from openai import OpenAI
 
 from app.config import get_settings
 from app.services.semantic_layer import resolve_user_term
+
+_log = logging.getLogger(__name__)
 
 
 def _extract_json_object(text: str) -> dict[str, Any] | None:
@@ -127,12 +131,142 @@ OUTPUT SCHEMA (output this exact JSON structure, nothing else):
 }"""
 
 
+_ANTHROPIC_RESOLVE_TOOL = {
+    "name": "resolve_schema_terms",
+    "description": (
+        "Resolve a human-readable measurement name (e.g. 'maximum force', 'tensile strength') "
+        "to its exact UUID in the materials testing database. "
+        "Call this for EVERY metric mentioned in the user's question before generating the final JSON output."
+    ),
+    "input_schema": {
+        "type": "object",
+        "properties": {
+            "term": {
+                "type": "string",
+                "description": "The human-readable measurement name to resolve (e.g. 'maximum force').",
+            },
+        },
+        "required": ["term"],
+    },
+}
+
+
+class AnthropicGateway:
+    def __init__(self) -> None:
+        self.settings = get_settings()
+
+    def is_ready(self) -> bool:
+        return bool(self.settings.anthropic_api_key)
+
+    def get_model(self, purpose: str) -> str:
+        if purpose == "planner":
+            return self.settings.anthropic_model_planner
+        if purpose == "insight":
+            return self.settings.anthropic_model_insight
+        return self.settings.anthropic_model_query
+
+    def generate_json(
+        self,
+        model: str,
+        system_prompt: str,
+        user_prompt: str,
+        max_tokens: int = 1600,
+        temperature: float = 0.0,
+    ) -> dict[str, Any] | None:
+        if not self.is_ready():
+            return None
+        try:
+            client = anthropic.Anthropic(api_key=self.settings.anthropic_api_key)
+            response = client.messages.create(
+                model=model,
+                max_tokens=max_tokens,
+                system=system_prompt + "\n\nIMPORTANT: Output only valid JSON, no markdown.",
+                messages=[{"role": "user", "content": user_prompt}],
+            )
+            content = response.content[0].text if response.content else ""
+            if not content:
+                return None
+            return _extract_json_object(content)
+        except Exception as exc:  # noqa: BLE001
+            _log.warning("Anthropic generate_json failed: %s", exc)
+            return None
+
+    def generate_query_plan(
+        self,
+        question: str,
+        model: str,
+        max_tool_rounds: int = 5,
+        history: list[dict[str, str]] | None = None,
+    ) -> dict[str, Any] | None:
+        """Call Claude with resolve_schema_terms tool use to produce QueryPlannerSchema JSON."""
+        if not self.is_ready():
+            return None
+        try:
+            client = anthropic.Anthropic(api_key=self.settings.anthropic_api_key)
+            # Prepend conversation history so follow-up questions have context
+            messages: list[dict[str, Any]] = []
+            for turn in (history or []):
+                if turn.get("role") in {"user", "assistant"}:
+                    messages.append({"role": turn["role"], "content": turn["content"]})
+            messages.append({
+                "role": "user",
+                "content": f"Translate this question into the JSON routing schema: {question}",
+            })
+
+            for _ in range(max_tool_rounds):
+                response = client.messages.create(
+                    model=model,
+                    max_tokens=2000,
+                    system=_QUERY_PLANNER_SYSTEM_PROMPT,
+                    tools=[_ANTHROPIC_RESOLVE_TOOL],
+                    messages=messages,
+                )
+
+                if response.stop_reason == "tool_use":
+                    # Append assistant turn
+                    messages.append({"role": "assistant", "content": response.content})
+                    # Process tool calls and append results
+                    tool_results = []
+                    for block in response.content:
+                        if block.type == "tool_use" and block.name == "resolve_schema_terms":
+                            term = block.input.get("term", "")
+                            try:
+                                results = resolve_user_term(term, limit=5)
+                            except Exception:  # noqa: BLE001
+                                results = []
+                            tool_results.append({
+                                "type": "tool_result",
+                                "tool_use_id": block.id,
+                                "content": json.dumps(results),
+                            })
+                    messages.append({"role": "user", "content": tool_results})
+                else:
+                    # Extract text from final response
+                    for block in response.content:
+                        if hasattr(block, "text") and block.text:
+                            return _extract_json_object(block.text)
+                    return None
+
+        except Exception as exc:  # noqa: BLE001
+            _log.warning("Anthropic generate_query_plan failed: %s", exc)
+            return None
+
+        return None
+
+
 class OpenAIGateway:
     def __init__(self) -> None:
         self.settings = get_settings()
 
     def is_ready(self) -> bool:
         return bool(self.settings.openai_api_key)
+
+    def get_model(self, purpose: str) -> str:
+        if purpose == "planner":
+            return self.settings.openai_model_planner
+        if purpose == "insight":
+            return self.settings.openai_model_insight
+        return self.settings.openai_model_query
 
     def generate_json(
         self,
@@ -158,8 +292,7 @@ class OpenAIGateway:
                 ],
             )
         except Exception as exc:  # noqa: BLE001
-            import logging
-            logging.getLogger(__name__).warning("OpenAI generate_json failed: %s", exc)
+            _log.warning("OpenAI generate_json failed: %s", exc)
             return None
 
         content = response.choices[0].message.content
@@ -173,6 +306,7 @@ class OpenAIGateway:
         question: str,
         model: str,
         max_tool_rounds: int = 5,
+        history: list[dict[str, str]] | None = None,
     ) -> dict[str, Any] | None:
         """Call OpenAI with the resolve_schema_terms tool to produce QueryPlannerSchema JSON.
 
@@ -184,13 +318,17 @@ class OpenAIGateway:
 
         try:
             client = OpenAI(api_key=self.settings.openai_api_key)
+            # Prepend conversation history so follow-up questions have context
             messages: list[dict[str, Any]] = [
                 {"role": "system", "content": _QUERY_PLANNER_SYSTEM_PROMPT},
-                {
-                    "role": "user",
-                    "content": f"Translate this question into the JSON routing schema: {question}",
-                },
             ]
+            for turn in (history or []):
+                if turn.get("role") in {"user", "assistant"}:
+                    messages.append({"role": turn["role"], "content": turn["content"]})
+            messages.append({
+                "role": "user",
+                "content": f"Translate this question into the JSON routing schema: {question}",
+            })
 
             for _ in range(max_tool_rounds):
                 response = client.chat.completions.create(
@@ -226,3 +364,11 @@ class OpenAIGateway:
             return None
 
         return None
+
+
+def get_gateway() -> AnthropicGateway | OpenAIGateway:
+    """Return the active LLM gateway based on LLM_PROVIDER setting."""
+    settings = get_settings()
+    if settings.llm_provider.lower() == "anthropic":
+        return AnthropicGateway()
+    return OpenAIGateway()

@@ -122,17 +122,26 @@ class QueryRunResponse(BaseModel):
 # API request / response schemas
 # ---------------------------------------------------------------------------
 
+class ConversationTurn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    role: str  # "user" or "assistant"
+    content: str
+
+
 class PlannerRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     question: str = Field(min_length=3)
-    context: dict[str, Any] = Field(default_factory=dict)
+    context: Any = Field(default_factory=dict)
+    conversation_history: list[ConversationTurn] = Field(default_factory=list)
 
 
 class PlannerResponse(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     plan: QueryPlannerSchema
+    semantic_candidates: list[Any] = Field(default_factory=list)
 
 
 class QueryRunRequest(BaseModel):
@@ -140,6 +149,7 @@ class QueryRunRequest(BaseModel):
 
     plan: QueryPlannerSchema
     max_repairs: int | None = Field(default=None, ge=0, le=5)
+    semantic_candidates: list[Any] = Field(default_factory=list)
 
 
 class InsightRequest(BaseModel):
@@ -150,6 +160,18 @@ class InsightRequest(BaseModel):
     stats: dict[str, Any] = Field(default_factory=dict)
 
 
+class SavedQueryResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    id: str
+    question: str
+    intent: str
+    created_at: str
+    row_count: int
+    x_values: list[Any] = Field(default_factory=list)
+    y_values: list[Any] = Field(default_factory=list)
+
+
 class InsightResponse(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -158,4 +180,7 @@ class InsightResponse(BaseModel):
     recommendation: str
     follow_up_questions: list[str]
     chart_config: dict[str, Any]
+    x_values: list[Any] = Field(default_factory=list)
+    y_values: list[Any] = Field(default_factory=list)
+    stats_summary: dict[str, Any] = Field(default_factory=dict)
     audit_log: list[str] = Field(default_factory=list)

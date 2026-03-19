@@ -1,9 +1,10 @@
 import logging
+import math
 from typing import Any
 
 from app.config import get_settings
 from app.schemas import InsightResponse, QueryIntent, QueryPlannerSchema
-from app.services.llm_gateway import OpenAIGateway
+from app.services.llm_gateway import get_gateway
 
 
 def _chart_for_plan(plan: QueryPlannerSchema) -> dict[str, Any]:
@@ -123,7 +124,7 @@ def _build_summary_sentences(
 
     if intent == QueryIntent.comparison:
         groups = [str(r.get("_id", "")) for r in rows if r.get("_id") is not None]
-        means = [r.get("mean") for r in rows if isinstance(r.get("mean"), (int, float))]
+        means = [r.get("mean") for r in rows if isinstance(r.get("mean"), (int, float)) and not math.isnan(r.get("mean")) and not math.isinf(r.get("mean"))]
         s1 = f"Comparison analysis completed across {row_count} group(s)."
         s2 = f"Groups: {', '.join(str(g) for g in groups[:5])}." if groups else "Groups compared based on available data."
         if len(means) >= 2:
@@ -138,7 +139,7 @@ def _build_summary_sentences(
             for r in rows
             if isinstance(r.get("_id"), dict) and r["_id"].get("date")
         ]
-        avg_vals = [r.get("avg_value") for r in rows if isinstance(r.get("avg_value"), (int, float))]
+        avg_vals = [r.get("avg_value") for r in rows if isinstance(r.get("avg_value"), (int, float)) and not math.isnan(r.get("avg_value")) and not math.isinf(r.get("avg_value"))]
         s1 = f"Trend analysis covers {row_count} time-bucketed data point(s)."
         s2 = (
             f"Date range: {dates[0]} to {dates[-1]}."
@@ -227,8 +228,7 @@ def _build_insight_llm(
     rows: list[dict[str, Any]],
     stats: dict[str, Any],
 ) -> InsightResponse | None:
-    settings = get_settings()
-    gateway = OpenAIGateway()
+    gateway = get_gateway()
     if not gateway.is_ready():
         return None
 
@@ -265,7 +265,7 @@ def _build_insight_llm(
     )
 
     result = gateway.generate_json(
-        model=settings.openai_model_insight,
+        model=gateway.get_model("insight"),
         system_prompt=system_prompt,
         user_prompt=user_prompt,
         max_tokens=1400,

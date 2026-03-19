@@ -12,7 +12,7 @@ from app.schemas import (
     QueryPlannerSchema,
     UIRenderingContract,
 )
-from app.services.llm_gateway import OpenAIGateway
+from app.services.llm_gateway import get_gateway
 from app.services.semantic_layer import resolve_user_term
 
 
@@ -344,21 +344,20 @@ def _validate_and_normalize_plan(raw: dict[str, Any], question: str) -> QueryPla
         return None
 
 
-def _build_plan_llm(question: str) -> QueryPlannerSchema | None:
-    """Call OpenAI with tool use to produce QueryPlannerSchema."""
-    settings = get_settings()
-    gateway = OpenAIGateway()
+def _build_plan_llm(question: str, history: list[dict[str, str]] | None = None) -> QueryPlannerSchema | None:
+    """Call LLM with tool use to produce QueryPlannerSchema."""
+    gateway = get_gateway()
     if not gateway.is_ready():
         return None
 
-    raw = gateway.generate_query_plan(question, model=settings.openai_model_planner)
+    raw = gateway.generate_query_plan(question, model=gateway.get_model("planner"), history=history)
     if not raw:
         return None
 
     return _validate_and_normalize_plan(raw, question)
 
 
-def build_plan(question: str, context: dict[str, Any] | None = None) -> tuple[QueryPlannerSchema, list[dict[str, Any]]]:
+def build_query_plan(question: str, context: dict[str, Any] | None = None, history: list[dict[str, str]] | None = None) -> QueryPlannerSchema:
     """Build a QueryPlannerSchema from a natural language question.
 
     Tries OpenAI (with resolve_schema_terms tool use) first,
@@ -366,8 +365,14 @@ def build_plan(question: str, context: dict[str, Any] | None = None) -> tuple[Qu
     """
     settings = get_settings()
     if settings.planner_mode.lower() == "llm":
-        llm_plan = _build_plan_llm(question)
+        llm_plan = _build_plan_llm(question, history=history)
         if llm_plan is not None:
             return llm_plan, []
 
-    return _build_plan_heuristic(question, context), []
+    return _build_plan_heuristic(question, context)
+
+
+def build_plan(question: str, context: Any = None, history: list[dict[str, str]] | None = None) -> tuple[QueryPlannerSchema, list]:
+    """Alias used by main.py — returns (plan, semantic_candidates)."""
+    plan = build_query_plan(question, context if isinstance(context, dict) else None, history=history)
+    return plan, []
