@@ -12,29 +12,34 @@ interface ReasoningPanelProps {
   onToggle: () => void;
 }
 
-const defaultReasoning: ReasoningData = {
-  intent: "Trend Analysis",
-  dataUsed: "Tests, Values (last 6 months)",
-  metric: "Maximum Force (N)",
-  method: "Mean, Std Dev, Linear Regression",
-  chartType: "Area Chart",
-  auditLog: [
-    "Queried tests table — 847 records",
-    "Filtered by date range: Oct 2025 – Mar 2026",
-    "Joined values table on test_id",
-    "Computed descriptive statistics",
-    "Generated trend line via OLS regression",
-  ],
-  anomalies: [
-    "Sample #412 — force 45% below mean (possible grip slip)",
-    "Machine B batch Dec-15 — elevated std deviation",
-  ],
-  recommendations: "Inspect Machine B calibration logs for December. Consider re-testing flagged sample #412 with fresh specimen.",
-  stats: { mean: 714.2, std: 18.7, count: 847, min: 392, max: 745 },
-};
-
 export function ReasoningPanel({ reasoning, collapsed, onToggle }: ReasoningPanelProps) {
-  const data = reasoning || defaultReasoning;
+  if (!collapsed && !reasoning) {
+    return (
+      <motion.aside
+        initial={false}
+        animate={{ width: 300 }}
+        transition={{ duration: 0.3, ease: [0.4, 0, 0.2, 1] }}
+        className="h-full flex flex-col border-l border-border bg-card/60 overflow-hidden shrink-0"
+      >
+        <div className="flex items-center justify-between p-2 border-b border-border">
+          <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wider pl-1">
+            How I Got This
+          </span>
+          <button onClick={onToggle} className="p-1.5 rounded-md hover:bg-secondary text-muted-foreground transition-colors ml-auto">
+            <PanelRightClose className="w-4 h-4" />
+          </button>
+        </div>
+        <div className="flex-1 flex flex-col items-center justify-center p-6 text-center">
+          <Brain className="w-8 h-8 text-muted-foreground/40 mb-3" />
+          <p className="text-sm text-muted-foreground leading-relaxed max-w-[200px]">
+            Ask a question to see how I analyzed your data
+          </p>
+        </div>
+      </motion.aside>
+    );
+  }
+
+  const data = reasoning!;
 
   return (
     <motion.aside

@@ -13,11 +13,11 @@ def _chart_for_plan(plan: QueryPlannerSchema) -> dict[str, Any]:
     y = plan.ui_rendering_contract.y_axis_mapping
 
     if pres == "line_chart":
-        return {"type": "line", "x": x or "uploadDate", "y": y or "value", "title": "Trend over time"}
+        return {"type": "line", "xKey": x or "date", "yKey": y or "avg_value", "title": "Trend over time"}
     if pres == "box_plot":
-        return {"type": "bar", "x": x or "group", "y": y or "value", "title": "Comparison view"}
+        return {"type": "bar", "xKey": x or "_id", "yKey": y or "mean", "title": "Comparison view"}
     if pres == "scatter_plot":
-        return {"type": "scatter", "x": x or "index", "y": y or "value", "title": "Data distribution"}
+        return {"type": "scatter", "xKey": x or "_id", "yKey": y or "mean", "title": "Data distribution"}
     if pres == "compliance_badge":
         return {"type": "table", "title": "Compliance check"}
     return {"type": "table", "title": "Result overview"}
@@ -248,7 +248,7 @@ def _build_insight_llm(
         '  "anomaly_notes": string[],\n'
         '  "recommendation": string,\n'
         '  "follow_up_questions": string[],\n'
-        '  "chart_config": {"type": "line|bar|scatter|table", "x": string?, "y": string?, "title": string},\n'
+        '  "chart_config": {"type": "line|bar|scatter|table", "xKey": string?, "yKey": string?, "title": string},\n'
         '  "audit_log": string[]\n'
         "}\n"
         "Rules:\n"
@@ -309,10 +309,10 @@ def _build_insight_llm(
             "title": str(chart_raw.get("title") or fallback.chart_config.get("title", "Results")).strip(),
         }
         if chart_type != "table":
-            if x_val := chart_raw.get("x"):
-                chart_config["x"] = str(x_val)
-            if y_val := chart_raw.get("y"):
-                chart_config["y"] = str(y_val)
+            for key, target_key in [("xKey", "xKey"), ("x", "xKey"), ("yKey", "yKey"), ("y", "yKey")]:
+                if chart_raw.get(key):
+                    chart_config[target_key] = str(chart_raw[key])
+                    break
     else:
         chart_config = fallback.chart_config
 

@@ -3,7 +3,6 @@ import logging
 import re
 from typing import Any
 
-import anthropic
 from openai import OpenAI
 
 from app.config import get_settings
@@ -176,6 +175,7 @@ class AnthropicGateway:
         if not self.is_ready():
             return None
         try:
+            import anthropic
             client = anthropic.Anthropic(api_key=self.settings.anthropic_api_key)
             response = client.messages.create(
                 model=model,
@@ -202,6 +202,7 @@ class AnthropicGateway:
         if not self.is_ready():
             return None
         try:
+            import anthropic
             client = anthropic.Anthropic(api_key=self.settings.anthropic_api_key)
             # Prepend conversation history so follow-up questions have context
             messages: list[dict[str, Any]] = []

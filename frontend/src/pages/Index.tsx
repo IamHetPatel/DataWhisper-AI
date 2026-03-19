@@ -5,46 +5,6 @@ import { ChartDisplay } from "@/components/dashboard/ChartDisplay";
 import { ReasoningPanel } from "@/components/dashboard/ReasoningPanel";
 import { ReportModal } from "@/components/dashboard/ReportModal";
 import { v4 as uuidv4 } from "uuid";
-// Simulated AI responses for demo
-const demoResponses: Record<string, { content: string; chartConfig?: ChartConfig; reasoning?: ReasoningData; followUps: string[] }> = {
-  default: {
-    content: "Based on your test data, I've analyzed **847 tensile test records** from the past 6 months.\n\nThe mean maximum force across all specimens is **714.2 N** (σ = 18.7 N). Machine A shows slightly higher consistency with a CV of 2.4% compared to Machine B's 2.9%.\n\nI've plotted the force-strain curve for the latest batch below.",
-    followUps: ["Compare last 7 days?", "Check anomalies?", "Filter by material?", "Compare another machine?"],
-    reasoning: {
-      intent: "Trend Analysis",
-      dataUsed: "Tests, Values (last 6 months)",
-      metric: "Maximum Force (N)",
-      method: "Mean, Std Dev, Linear Regression",
-      chartType: "Area Chart",
-      auditLog: ["Queried tests — 847 records", "Filtered Oct 2025 – Mar 2026", "Joined values on test_id", "Computed statistics", "Generated trend line"],
-      anomalies: ["Sample #412 — force 45% below mean", "Machine B batch Dec-15 — elevated std dev"],
-      recommendations: "Inspect Machine B calibration logs for December. Re-test sample #412.",
-      stats: { mean: 714.2, std: 18.7, count: 847, min: 392, max: 745 },
-    },
-  },
-  compare: {
-    content: "**Machine A vs Machine B — Comparison Complete**\n\nAcross 5 matched sample pairs:\n- Machine A mean: **717.6 N**\n- Machine B mean: **701.0 N**\n\nMachine A delivers **2.4% higher** maximum force on average. The difference is statistically significant (p < 0.05).",
-    chartConfig: { type: "bar", title: "Maximum Force Comparison (Machine A vs B)", data: [], xKey: "name", yKey: "machineA" },
-    followUps: ["Show individual samples?", "Check Machine B calibration?", "Run t-test details?", "Filter by material type?"],
-    reasoning: {
-      intent: "Comparison",
-      dataUsed: "Tests (Machine A, Machine B)",
-      metric: "Maximum Force (N)",
-      method: "Paired comparison, t-test",
-      chartType: "Bar Chart",
-      auditLog: ["Selected matched pairs", "Computed per-machine stats", "Ran paired t-test (p=0.032)", "Generated comparison chart"],
-      anomalies: [],
-      recommendations: "Machine B shows consistent under-performance. Schedule calibration check.",
-      stats: { "A mean": 717.6, "B mean": 701.0, "p-value": 0.032, delta: 16.6, pairs: 5 },
-    },
-  },
-};
-
-function getResponse(query: string) {
-  const lower = query.toLowerCase();
-  if (lower.includes("compare") || lower.includes("machine")) return demoResponses.compare;
-  return demoResponses.default;
-}
 
 export default function Index() {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
@@ -68,12 +28,16 @@ export default function Index() {
     setIsLoading(true);
 
     try {
+      const conversationHistory = messages
+        .filter((m) => m.role === "user" || m.role === "assistant")
+        .map((m) => ({ role: m.role, content: m.content }));
+
       const response = await fetch(`${import.meta.env.VITE_API_URL}/query`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
         },
-        body: JSON.stringify({ question: text, context: {} }),
+        body: JSON.stringify({ question: text, context: {}, conversation_history: conversationHistory }),
       });
 
       if (!response.ok) {
@@ -81,15 +45,29 @@ export default function Index() {
       }
 
       const data = await response.json();
-      
-      // Map FastAPI InsightResponse to UI Format
-      // data: { summary_3_sentences: [], anomaly_notes: [], recommendation: "", follow_up_questions: [], chart_config: {}, audit_log: [] }
-      
-      const markdownContent = data.summary_3_sentences.join(" ") + 
+
+      const markdownContent = data.summary_3_sentences.join(" ") +
                               "\n\n**Recommendation:** " + data.recommendation;
 
-      let extractedStats = undefined;
-      if (data.chart_data && data.chart_data.length > 0) {
+      let extractedStats: Record<string, number> | undefined = undefined;
+      if (data.stats_summary && Object.keys(data.stats_summary).length > 0) {
+        const ss = data.stats_summary;
+        if (ss.group_comparison) {
+          const gc = ss.group_comparison;
+          extractedStats = {
+            "group 1": gc.mean_1,
+            "group 2": gc.mean_2,
+            delta: gc.difference,
+            "p-value": gc.p_value,
+          };
+        } else if (ss.drift) {
+          extractedStats = {
+            slope: ss.drift.slope,
+            "p-value": ss.drift.p_value,
+          };
+        }
+      }
+      if (!extractedStats && data.chart_data && data.chart_data.length > 0) {
         const firstRow = data.chart_data[0];
         if (firstRow && typeof firstRow.mean === "number") {
           extractedStats = {
@@ -115,10 +93,11 @@ export default function Index() {
         metric: getAuditVal("Metrics:", "Auto-computed"),
         method: getAuditVal("Operation:", "LangChain Pipeline"),
         chartType: data.chart_config?.type || "Dynamic",
+        summary: data.summary_3_sentences,
         auditLog: data.audit_log,
         anomalies: data.anomaly_notes,
         recommendations: data.recommendation,
-        stats: extractedStats, // dynamically populated from MongoDB rows!
+        stats: extractedStats,
       };
 
       const chartConfigObj = Object.keys(data.chart_config).length > 0
@@ -151,15 +130,21 @@ export default function Index() {
     } finally {
       setIsLoading(false);
     }
-  }, []);
+  }, [messages]);
 
   const handleQuerySelect = (query: string) => {
     if (query) handleSendMessage(query);
   };
 
+  const handleNewChat = () => {
+    setMessages([]);
+    setActiveChart(null);
+    setActiveReasoning(null);
+  };
+
   return (
     <div className="h-screen flex overflow-hidden bg-background">
-      <LeftSidebar collapsed={leftCollapsed} onToggle={() => setLeftCollapsed((c) => !c)} onQuerySelect={handleQuerySelect} />
+      <LeftSidebar collapsed={leftCollapsed} onToggle={() => setLeftCollapsed((c) => !c)} onQuerySelect={handleQuerySelect} onNewChat={handleNewChat} />
 
       {/* Center: Chat + Charts */}
       <div className="flex-1 flex flex-col min-w-0 overflow-hidden">

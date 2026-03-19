@@ -18,11 +18,41 @@ const COLORS = {
   amber: "hsl(38, 92%, 50%)",
 };
 
+function flattenRow(row: Record<string, unknown>, index: number): Record<string, unknown> {
+  const out: Record<string, unknown> = { _index: index };
+  for (const [k, v] of Object.entries(row)) {
+    if (k === "_id") {
+      if (v !== null && typeof v === "object" && !Array.isArray(v)) {
+        const nested = v as Record<string, unknown>;
+        if (nested.date !== undefined) out.date = String(nested.date);
+        if (nested.group !== undefined) out.group = String(nested.group);
+      } else {
+        out._id = String(v ?? index);
+      }
+    } else if (typeof v === "number" || typeof v === "string") {
+      out[k] = v;
+    }
+  }
+  return out;
+}
+
+function getChartData(chart: ChartConfig): { data: Record<string, unknown>[]; xKey: string; yKey: string } {
+  const rows = chart.data ?? [];
+  if (!rows.length) {
+    return { data: [], xKey: "name", yKey: "value" };
+  }
+  const flat = rows.map(flattenRow);
+  const xKey = chart.xKey === "_id" ? "_id" : (chart.xKey ?? (flat[0]?.date ? "date" : flat[0]?._id ? "_id" : "_index"));
+  const yKey = chart.yKey ?? (flat[0]?.avg_value ? "avg_value" : flat[0]?.mean ? "mean" : flat[0]?.force ? "force" : "_index");
+  return { data: flat, xKey, yKey };
+}
+
 export function ReportModal({ open, onClose, reasoning, chart }: ReportModalProps) {
   const stats = reasoning?.stats || {};
   const anomalies = reasoning?.anomalies || [];
   const recommendation = reasoning?.recommendations || "No recommendations generated.";
-  
+  const summaryLines = reasoning?.summary ?? [];
+
   const tooltipStyle = {
     contentStyle: {
       backgroundColor: "hsl(220, 18%, 12%)",
@@ -76,9 +106,11 @@ export function ReportModal({ open, onClose, reasoning, chart }: ReportModalProp
               <section>
                 <h3 className="text-sm font-semibold text-foreground mb-3">Summary</h3>
                 <div className="bg-muted/30 rounded-xl p-4 space-y-2 text-sm text-muted-foreground leading-relaxed">
-                  <p>Analysis of 847 tensile test records collected between October 2025 and March 2026 across Machine A and Machine B.</p>
-                  <p>Mean maximum force is 714.2 N with a standard deviation of 18.7 N, indicating consistent material performance within acceptable tolerance.</p>
-                  <p>A positive trend of +0.8% per month in tensile strength suggests improving specimen preparation quality over time.</p>
+                  {summaryLines.length > 0 ? (
+                    summaryLines.map((line, i) => <p key={i}>{line}</p>)
+                  ) : (
+                    <p>No summary data available for this analysis.</p>
+                  )}
                 </div>
               </section>
 
@@ -118,42 +150,46 @@ export function ReportModal({ open, onClose, reasoning, chart }: ReportModalProp
                           </div>
                         )}
                       </div>
-                    ) : (
-                      <ResponsiveContainer width="100%" height="100%">
-                        {chart.type === "scatter" ? (
-                          <ScatterChart margin={{ top: 10, right: 30, bottom: 20, left: 10 }}>
-                            <CartesianGrid strokeDasharray="3 3" stroke="hsl(220, 16%, 16%)" />
-                            <XAxis dataKey={chart.xKey || "index"} name={chart.xKey || "Index"} tick={{ fill: "hsl(220, 12%, 50%)", fontSize: 11 }} axisLine={{ stroke: "hsl(220, 16%, 18%)" }} />
-                            <YAxis dataKey={chart.yKey || "value"} name={chart.yKey || "Value"} tick={{ fill: "hsl(220, 12%, 50%)", fontSize: 11 }} axisLine={{ stroke: "hsl(220, 16%, 18%)" }} />
-                            <Tooltip {...tooltipStyle} cursor={{ strokeDasharray: "3 3" }} />
-                            <Scatter name="Data" data={chart.data} fill={COLORS.amber} />
-                          </ScatterChart>
-                        ) : chart.type === "bar" ? (
-                          <BarChart data={chart.data} margin={{ top: 10, right: 10, bottom: 20, left: 0 }}>
-                            <CartesianGrid strokeDasharray="3 3" stroke="hsl(220, 16%, 16%)" />
-                            <XAxis dataKey={chart.xKey || "name"} tick={{ fill: "hsl(220, 12%, 50%)", fontSize: 11 }} axisLine={{ stroke: "hsl(220, 16%, 18%)" }} />
-                            <YAxis tick={{ fill: "hsl(220, 12%, 50%)", fontSize: 11 }} axisLine={{ stroke: "hsl(220, 16%, 18%)" }} />
-                            <Tooltip {...tooltipStyle} />
-                            <Legend wrapperStyle={{ fontSize: 11 }} />
-                            <Bar dataKey={chart.yKey || "mean"} fill={COLORS.blue} radius={[4, 4, 0, 0]} />
-                          </BarChart>
-                        ) : (
-                          <AreaChart data={chart.data} margin={{ top: 10, right: 10, bottom: 20, left: 0 }}>
-                            <defs>
-                              <linearGradient id="reportFill" x1="0" y1="0" x2="0" y2="1">
-                                <stop offset="5%" stopColor={COLORS.blue} stopOpacity={0.3} />
-                                <stop offset="95%" stopColor={COLORS.blue} stopOpacity={0} />
-                              </linearGradient>
-                            </defs>
-                            <CartesianGrid strokeDasharray="3 3" stroke="hsl(220, 16%, 16%)" />
-                            <XAxis dataKey={chart.xKey || "strain"} tick={{ fill: "hsl(220, 12%, 50%)", fontSize: 11 }} axisLine={{ stroke: "hsl(220, 16%, 18%)" }} />
-                            <YAxis tick={{ fill: "hsl(220, 12%, 50%)", fontSize: 11 }} axisLine={{ stroke: "hsl(220, 16%, 18%)" }} />
-                            <Tooltip {...tooltipStyle} />
-                            <Area type="monotone" dataKey={chart.yKey || "avg_value"} stroke={COLORS.blue} fill="url(#reportFill)" strokeWidth={2} dot={{ fill: COLORS.blue, r: 3 }} />
-                          </AreaChart>
-                        )}
-                      </ResponsiveContainer>
-                    )}
+                    ) : (() => {
+                        const { data, xKey, yKey } = getChartData(chart);
+                        return (
+                          <ResponsiveContainer width="100%" height="100%">
+                            {chart.type === "scatter" ? (
+                              <ScatterChart margin={{ top: 10, right: 30, bottom: 20, left: 10 }}>
+                                <CartesianGrid strokeDasharray="3 3" stroke="hsl(220, 16%, 16%)" />
+                                <XAxis dataKey={xKey} name={xKey} tick={{ fill: "hsl(220, 12%, 50%)", fontSize: 11 }} axisLine={{ stroke: "hsl(220, 16%, 18%)" }} />
+                                <YAxis dataKey={yKey} name={yKey} tick={{ fill: "hsl(220, 12%, 50%)", fontSize: 11 }} axisLine={{ stroke: "hsl(220, 16%, 18%)" }} />
+                                <Tooltip {...tooltipStyle} cursor={{ strokeDasharray: "3 3" }} />
+                                <Scatter name="Data" data={data} fill={COLORS.amber} />
+                              </ScatterChart>
+                            ) : chart.type === "bar" ? (
+                              <BarChart data={data} margin={{ top: 10, right: 10, bottom: 20, left: 0 }}>
+                                <CartesianGrid strokeDasharray="3 3" stroke="hsl(220, 16%, 16%)" />
+                                <XAxis dataKey={xKey} tick={{ fill: "hsl(220, 12%, 50%)", fontSize: 11 }} axisLine={{ stroke: "hsl(220, 16%, 18%)" }} />
+                                <YAxis tick={{ fill: "hsl(220, 12%, 50%)", fontSize: 11 }} axisLine={{ stroke: "hsl(220, 16%, 18%)" }} />
+                                <Tooltip {...tooltipStyle} />
+                                <Legend wrapperStyle={{ fontSize: 11 }} />
+                                <Bar dataKey={yKey} fill={COLORS.blue} radius={[4, 4, 0, 0]} />
+                              </BarChart>
+                            ) : (
+                              <AreaChart data={data} margin={{ top: 10, right: 10, bottom: 20, left: 0 }}>
+                                <defs>
+                                  <linearGradient id="reportFill" x1="0" y1="0" x2="0" y2="1">
+                                    <stop offset="5%" stopColor={COLORS.blue} stopOpacity={0.3} />
+                                    <stop offset="95%" stopColor={COLORS.blue} stopOpacity={0} />
+                                  </linearGradient>
+                                </defs>
+                                <CartesianGrid strokeDasharray="3 3" stroke="hsl(220, 16%, 16%)" />
+                                <XAxis dataKey={xKey} tick={{ fill: "hsl(220, 12%, 50%)", fontSize: 11 }} axisLine={{ stroke: "hsl(220, 16%, 18%)" }} />
+                                <YAxis tick={{ fill: "hsl(220, 12%, 50%)", fontSize: 11 }} axisLine={{ stroke: "hsl(220, 16%, 18%)" }} />
+                                <Tooltip {...tooltipStyle} />
+                                <Area type="monotone" dataKey={yKey} stroke={COLORS.blue} fill="url(#reportFill)" strokeWidth={2} dot={{ fill: COLORS.blue, r: 3 }} />
+                              </AreaChart>
+                            )}
+                          </ResponsiveContainer>
+                        );
+                      })()
+                    }
                   </div>
                 </section>
               )}

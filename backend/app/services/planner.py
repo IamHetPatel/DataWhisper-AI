@@ -367,7 +367,7 @@ def build_query_plan(question: str, context: dict[str, Any] | None = None, histo
     if settings.planner_mode.lower() == "llm":
         llm_plan = _build_plan_llm(question, history=history)
         if llm_plan is not None:
-            return llm_plan, []
+            return llm_plan
 
     return _build_plan_heuristic(question, context)
 

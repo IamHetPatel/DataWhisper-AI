@@ -1,7 +1,6 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
-  MessageSquare,
   Clock,
   Bookmark,
   Plus,
@@ -10,28 +9,78 @@ import {
   FlaskConical,
   Gauge,
   TrendingUp,
+  type LucideIcon,
 } from "lucide-react";
 
-const recentQueries = [
-  { id: 1, text: "Compare Machine A vs Machine B", icon: Activity, time: "2m ago" },
-  { id: 2, text: "Tensile strength trend — 6 months", icon: TrendingUp, time: "15m ago" },
-  { id: 3, text: "Anomalies in force measurements", icon: Gauge, time: "1h ago" },
-  { id: 4, text: "Test speed vs maximum force", icon: FlaskConical, time: "3h ago" },
+interface SavedQuery {
+  id: string;
+  question: string;
+  intent: string;
+  created_at: string;
+  row_count: number;
+}
+
+const INTENT_ICON: Record<string, LucideIcon> = {
+  comparison: Activity,
+  trend_drift: TrendingUp,
+  anomaly_check: Gauge,
+  hypothesis: FlaskConical,
+  lookup: Activity,
+  summary: FlaskConical,
+  validation_compliance: Gauge,
+};
+
+const DEFAULT_RECENT: SavedQuery[] = [
+  { id: "demo1", question: "Compare Machine A vs Machine B", intent: "comparison", created_at: "", row_count: 0 },
+  { id: "demo2", question: "Tensile strength trend — 6 months", intent: "trend_drift", created_at: "", row_count: 0 },
+  { id: "demo3", question: "Anomalies in force measurements", intent: "anomaly_check", created_at: "", row_count: 0 },
+  { id: "demo4", question: "Test speed vs maximum force", intent: "hypothesis", created_at: "", row_count: 0 },
 ];
 
-const savedTemplates = [
-  { id: 1, text: "Machine Comparison Report", icon: Activity },
-  { id: 2, text: "Monthly QC Summary", icon: Gauge },
-  { id: 3, text: "Material Batch Analysis", icon: FlaskConical },
+const DEFAULT_TEMPLATES: SavedQuery[] = [
+  { id: "tmpl1", question: "Machine Comparison Report", intent: "comparison", created_at: "", row_count: 0 },
+  { id: "tmpl2", question: "Monthly QC Summary", intent: "summary", created_at: "", row_count: 0 },
+  { id: "tmpl3", question: "Material Batch Analysis", intent: "lookup", created_at: "", row_count: 0 },
 ];
 
 interface LeftSidebarProps {
   collapsed: boolean;
   onToggle: () => void;
   onQuerySelect: (query: string) => void;
+  onNewChat: () => void;
 }
 
-export function LeftSidebar({ collapsed, onToggle, onQuerySelect }: LeftSidebarProps) {
+function timeAgo(iso: string): string {
+  if (!iso) return "";
+  try {
+    const diff = Date.now() - new Date(iso).getTime();
+    const mins = Math.floor(diff / 60000);
+    if (mins < 1) return "just now";
+    if (mins < 60) return `${mins}m ago`;
+    const hrs = Math.floor(mins / 60);
+    if (hrs < 24) return `${hrs}h ago`;
+    return `${Math.floor(hrs / 24)}d ago`;
+  } catch {
+    return "";
+  }
+}
+
+export function LeftSidebar({ collapsed, onToggle, onQuerySelect, onNewChat }: LeftSidebarProps) {
+  const [recent, setRecent] = useState<SavedQuery[]>(DEFAULT_RECENT);
+  const [templates, setTemplates] = useState<SavedQuery[]>(DEFAULT_TEMPLATES);
+
+  useEffect(() => {
+    fetch(`${import.meta.env.VITE_API_URL}/queries/templates`)
+      .then((r) => r.ok ? r.json() : null)
+      .then((data: SavedQuery[] | null) => {
+        if (data && data.length > 0) {
+          setRecent(data.slice(0, 4));
+          if (data.length > 4) setTemplates(data.slice(4, 7));
+        }
+      })
+      .catch(() => {});
+  }, []);
+
   return (
     <motion.aside
       initial={false}
@@ -64,7 +113,7 @@ export function LeftSidebar({ collapsed, onToggle, onQuerySelect }: LeftSidebarP
       {/* New Chat */}
       <div className="p-2">
         <button
-          onClick={() => onQuerySelect("")}
+          onClick={onNewChat}
           className="w-full flex items-center gap-2 px-3 py-2 rounded-lg border border-dashed border-border text-muted-foreground hover:text-foreground hover:border-primary/50 transition-all text-sm"
         >
           <Plus className="w-4 h-4" />
@@ -81,19 +130,23 @@ export function LeftSidebar({ collapsed, onToggle, onQuerySelect }: LeftSidebarP
               Recent
             </div>
             <div className="space-y-0.5">
-              {recentQueries.map((q) => (
-                <button
-                  key={q.id}
-                  onClick={() => onQuerySelect(q.text)}
-                  className="w-full flex items-start gap-2 px-2 py-2 rounded-lg text-left text-sm text-sidebar-foreground hover:bg-sidebar-accent hover:text-sidebar-accent-foreground transition-colors group"
-                >
-                  <q.icon className="w-3.5 h-3.5 mt-0.5 shrink-0 text-muted-foreground group-hover:text-primary transition-colors" />
-                  <div className="min-w-0 flex-1">
-                    <p className="truncate">{q.text}</p>
-                    <p className="text-xs text-muted-foreground mt-0.5">{q.time}</p>
-                  </div>
-                </button>
-              ))}
+              {recent.map((q) => {
+                const Icon = INTENT_ICON[q.intent] ?? Activity;
+                const time = timeAgo(q.created_at);
+                return (
+                  <button
+                    key={q.id}
+                    onClick={() => onQuerySelect(q.question)}
+                    className="w-full flex items-start gap-2 px-2 py-2 rounded-lg text-left text-sm text-sidebar-foreground hover:bg-sidebar-accent hover:text-sidebar-accent-foreground transition-colors group"
+                  >
+                    <Icon className="w-3.5 h-3.5 mt-0.5 shrink-0 text-muted-foreground group-hover:text-primary transition-colors" />
+                    <div className="min-w-0 flex-1">
+                      <p className="truncate">{q.question}</p>
+                      {time && <p className="text-xs text-muted-foreground mt-0.5">{time}</p>}
+                    </div>
+                  </button>
+                );
+              })}
             </div>
           </div>
 
@@ -104,16 +157,19 @@ export function LeftSidebar({ collapsed, onToggle, onQuerySelect }: LeftSidebarP
               Templates
             </div>
             <div className="space-y-0.5">
-              {savedTemplates.map((t) => (
-                <button
-                  key={t.id}
-                  onClick={() => onQuerySelect(t.text)}
-                  className="w-full flex items-center gap-2 px-2 py-2 rounded-lg text-left text-sm text-sidebar-foreground hover:bg-sidebar-accent hover:text-sidebar-accent-foreground transition-colors group"
-                >
-                  <t.icon className="w-3.5 h-3.5 shrink-0 text-muted-foreground group-hover:text-primary transition-colors" />
-                  <span className="truncate">{t.text}</span>
-                </button>
-              ))}
+              {templates.map((t) => {
+                const Icon = INTENT_ICON[t.intent] ?? FlaskConical;
+                return (
+                  <button
+                    key={t.id}
+                    onClick={() => onQuerySelect(t.question)}
+                    className="w-full flex items-center gap-2 px-2 py-2 rounded-lg text-left text-sm text-sidebar-foreground hover:bg-sidebar-accent hover:text-sidebar-accent-foreground transition-colors group"
+                  >
+                    <Icon className="w-3.5 h-3.5 shrink-0 text-muted-foreground group-hover:text-primary transition-colors" />
+                    <span className="truncate">{t.question}</span>
+                  </button>
+                );
+              })}
             </div>
           </div>
         </div>

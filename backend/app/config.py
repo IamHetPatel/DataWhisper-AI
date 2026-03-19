@@ -25,7 +25,7 @@ class Settings(BaseSettings):
     planner_mode: str = "mock"
     query_mode: str = "mock"
     insight_mode: str = "mock"
-    llm_provider: str = "anthropic"
+    llm_provider: str = "openai"
 
     anthropic_api_key: str | None = None
     anthropic_model_planner: str = "claude-sonnet-4-6"

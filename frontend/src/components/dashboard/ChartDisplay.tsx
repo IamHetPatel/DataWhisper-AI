@@ -4,7 +4,7 @@ import {
   XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend,
   Area, AreaChart,
 } from "recharts";
-import { FileText, Download } from "lucide-react";
+import { FileText } from "lucide-react";
 import type { ChartConfig } from "./ChatPanel";
 
 interface ChartDisplayProps {
@@ -19,8 +19,7 @@ const COLORS = {
   red: "hsl(0, 72%, 51%)",
 };
 
-// Demo data
-const forceStrainData = [
+const DEFAULT_FORCE_STRAIN = [
   { strain: 0, force: 0 },
   { strain: 0.5, force: 120 },
   { strain: 1.0, force: 310 },
@@ -36,7 +35,7 @@ const forceStrainData = [
   { strain: 6.0, force: 0 },
 ];
 
-const comparisonData = [
+const DEFAULT_COMPARISON = [
   { name: "Sample 1", machineA: 710, machineB: 695 },
   { name: "Sample 2", machineA: 725, machineB: 680 },
   { name: "Sample 3", machineA: 698, machineB: 710 },
@@ -44,7 +43,7 @@ const comparisonData = [
   { name: "Sample 5", machineA: 715, machineB: 720 },
 ];
 
-const trendData = [
+const DEFAULT_TREND = [
   { month: "Oct", strength: 710 },
   { month: "Nov", strength: 718 },
   { month: "Dec", strength: 705 },
@@ -53,11 +52,45 @@ const trendData = [
   { month: "Mar", strength: 738 },
 ];
 
+function flattenRow(row: Record<string, unknown>, index: number): Record<string, unknown> {
+  const out: Record<string, unknown> = { _index: index };
+  for (const [k, v] of Object.entries(row)) {
+    if (k === "_id") {
+      if (v !== null && typeof v === "object" && !Array.isArray(v)) {
+        const nested = v as Record<string, unknown>;
+        if (nested.date !== undefined) out.date = String(nested.date);
+        if (nested.group !== undefined) out.group = String(nested.group);
+      } else {
+        out._id = String(v ?? index);
+      }
+    } else if (typeof v === "number" || typeof v === "string") {
+      out[k] = v;
+    }
+  }
+  return out;
+}
+
+function getChartData(chart: ChartConfig): { data: Record<string, unknown>[]; xKey: string; yKey: string } {
+  const rows = chart.data ?? [];
+  if (!rows.length) {
+    const defaults = chart.type === "bar" ? DEFAULT_COMPARISON : chart.type === "line" ? DEFAULT_TREND : DEFAULT_FORCE_STRAIN;
+    return {
+      data: defaults as Record<string, unknown>[],
+      xKey: chart.xKey ?? "name",
+      yKey: chart.yKey ?? "force",
+    };
+  }
+  const flat = rows.map(flattenRow);
+  const xKey = chart.xKey === "_id" ? "_id" : (chart.xKey ?? (flat[0]?.date ? "date" : flat[0]?._id ? "_id" : "_index"));
+  const yKey = chart.yKey ?? (flat[0]?.avg_value ? "avg_value" : flat[0]?.mean ? "mean" : flat[0]?.force ? "force" : "_index");
+  return { data: flat, xKey, yKey };
+}
+
 export function ChartDisplay({ chart, onGenerateReport }: ChartDisplayProps) {
   const activeChart = chart || {
     type: "line" as const,
     title: "Force vs Strain Curve",
-    data: forceStrainData,
+    data: DEFAULT_FORCE_STRAIN,
     xKey: "strain",
     yKey: "force",
   };
@@ -120,50 +153,55 @@ export function ChartDisplay({ chart, onGenerateReport }: ChartDisplayProps) {
             )}
           </div>
         ) : (
-          <ResponsiveContainer width="100%" height="100%">
-            {activeChart.type === "scatter" ? (
-              <ScatterChart margin={{ top: 10, right: 30, bottom: 20, left: 10 }}>
-                <CartesianGrid strokeDasharray="3 3" stroke="hsl(220, 16%, 16%)" />
-                <XAxis dataKey={activeChart.xKey || "index"} name={activeChart.xKey || "Index"} tick={{ fill: "hsl(220, 12%, 50%)", fontSize: 11 }} axisLine={{ stroke: "hsl(220, 16%, 18%)" }} />
-                <YAxis dataKey={activeChart.yKey || "value"} name={activeChart.yKey || "Value"} tick={{ fill: "hsl(220, 12%, 50%)", fontSize: 11 }} axisLine={{ stroke: "hsl(220, 16%, 18%)" }} />
-                <Tooltip {...tooltipStyle} cursor={{ strokeDasharray: "3 3" }} />
-                <Scatter name="Data" data={activeChart.data} fill={COLORS.amber} />
-              </ScatterChart>
-            ) : activeChart.type === "bar" ? (
-              <BarChart data={activeChart.data?.length ? activeChart.data : comparisonData} margin={{ top: 10, right: 10, bottom: 20, left: 0 }}>
-                <CartesianGrid strokeDasharray="3 3" stroke="hsl(220, 16%, 16%)" />
-                <XAxis dataKey={activeChart.xKey || "name"} tick={{ fill: "hsl(220, 12%, 50%)", fontSize: 11 }} axisLine={{ stroke: "hsl(220, 16%, 18%)" }} />
-                <YAxis tick={{ fill: "hsl(220, 12%, 50%)", fontSize: 11 }} axisLine={{ stroke: "hsl(220, 16%, 18%)" }} />
-                <Tooltip {...tooltipStyle} />
-                <Legend wrapperStyle={{ fontSize: 11 }} />
-                <Bar dataKey={activeChart.yKey || "mean"} fill={COLORS.blue} radius={[4, 4, 0, 0]} />
-              </BarChart>
-            ) : (
-              <AreaChart data={activeChart.data?.length ? activeChart.data : forceStrainData} margin={{ top: 10, right: 10, bottom: 20, left: 0 }}>
-                <defs>
-                  <linearGradient id="fillPrimary" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="5%" stopColor={COLORS.blue} stopOpacity={0.25} />
-                    <stop offset="95%" stopColor={COLORS.blue} stopOpacity={0} />
-                  </linearGradient>
-                </defs>
-                <CartesianGrid strokeDasharray="3 3" stroke="hsl(220, 16%, 16%)" />
-                <XAxis dataKey={activeChart.xKey || "strain"} tick={{ fill: "hsl(220, 12%, 50%)", fontSize: 11 }} axisLine={{ stroke: "hsl(220, 16%, 18%)" }} />
-                <YAxis tick={{ fill: "hsl(220, 12%, 50%)", fontSize: 11 }} axisLine={{ stroke: "hsl(220, 16%, 18%)" }} />
-                <Tooltip {...tooltipStyle} />
-                <Area type="monotone" dataKey={activeChart.yKey || "avg_value"} stroke={COLORS.blue} fill="url(#fillPrimary)" strokeWidth={2} dot={{ fill: COLORS.blue, r: 3 }} />
-              </AreaChart>
-            )}
-          </ResponsiveContainer>
+          (() => {
+            const { data, xKey, yKey } = getChartData(activeChart);
+            return (
+              <ResponsiveContainer width="100%" height="100%">
+                {activeChart.type === "scatter" ? (
+                  <ScatterChart margin={{ top: 10, right: 30, bottom: 20, left: 10 }}>
+                    <CartesianGrid strokeDasharray="3 3" stroke="hsl(220, 16%, 16%)" />
+                    <XAxis dataKey={xKey} name={xKey} tick={{ fill: "hsl(220, 12%, 50%)", fontSize: 11 }} axisLine={{ stroke: "hsl(220, 16%, 18%)" }} />
+                    <YAxis dataKey={yKey} name={yKey} tick={{ fill: "hsl(220, 12%, 50%)", fontSize: 11 }} axisLine={{ stroke: "hsl(220, 16%, 18%)" }} />
+                    <Tooltip {...tooltipStyle} cursor={{ strokeDasharray: "3 3" }} />
+                    <Scatter name="Data" data={data} fill={COLORS.amber} />
+                  </ScatterChart>
+                ) : activeChart.type === "bar" ? (
+                  <BarChart data={data} margin={{ top: 10, right: 10, bottom: 20, left: 0 }}>
+                    <CartesianGrid strokeDasharray="3 3" stroke="hsl(220, 16%, 16%)" />
+                    <XAxis dataKey={xKey} tick={{ fill: "hsl(220, 12%, 50%)", fontSize: 11 }} axisLine={{ stroke: "hsl(220, 16%, 18%)" }} />
+                    <YAxis tick={{ fill: "hsl(220, 12%, 50%)", fontSize: 11 }} axisLine={{ stroke: "hsl(220, 16%, 18%)" }} />
+                    <Tooltip {...tooltipStyle} />
+                    <Legend wrapperStyle={{ fontSize: 11 }} />
+                    <Bar dataKey={yKey} fill={COLORS.blue} radius={[4, 4, 0, 0]} />
+                  </BarChart>
+                ) : (
+                  <AreaChart data={data} margin={{ top: 10, right: 10, bottom: 20, left: 0 }}>
+                    <defs>
+                      <linearGradient id="fillPrimary" x1="0" y1="0" x2="0" y2="1">
+                        <stop offset="5%" stopColor={COLORS.blue} stopOpacity={0.25} />
+                        <stop offset="95%" stopColor={COLORS.blue} stopOpacity={0} />
+                      </linearGradient>
+                    </defs>
+                    <CartesianGrid strokeDasharray="3 3" stroke="hsl(220, 16%, 16%)" />
+                    <XAxis dataKey={xKey} tick={{ fill: "hsl(220, 12%, 50%)", fontSize: 11 }} axisLine={{ stroke: "hsl(220, 16%, 18%)" }} />
+                    <YAxis tick={{ fill: "hsl(220, 12%, 50%)", fontSize: 11 }} axisLine={{ stroke: "hsl(220, 16%, 18%)" }} />
+                    <Tooltip {...tooltipStyle} />
+                    <Area type="monotone" dataKey={yKey} stroke={COLORS.blue} fill="url(#fillPrimary)" strokeWidth={2} dot={{ fill: COLORS.blue, r: 3 }} />
+                  </AreaChart>
+                )}
+              </ResponsiveContainer>
+            );
+          })()
         )}
       </div>
 
-      {/* Secondary charts row */}
+      {/* Secondary charts — only shown for demo fallback (no live data from backend) */}
       <div className="grid grid-cols-2 gap-3">
         <div className="bg-muted/50 rounded-lg p-3">
           <p className="text-xs font-medium text-muted-foreground mb-2">Max Force Comparison</p>
           <div className="h-[120px]">
             <ResponsiveContainer width="100%" height="100%">
-              <BarChart data={comparisonData}>
+              <BarChart data={DEFAULT_COMPARISON}>
                 <XAxis dataKey="name" tick={{ fill: "hsl(220, 12%, 50%)", fontSize: 9 }} axisLine={false} tickLine={false} />
                 <YAxis hide />
                 <Bar dataKey="machineA" fill={COLORS.blue} radius={[3, 3, 0, 0]} />
@@ -176,7 +214,7 @@ export function ChartDisplay({ chart, onGenerateReport }: ChartDisplayProps) {
           <p className="text-xs font-medium text-muted-foreground mb-2">Tensile Strength Trend</p>
           <div className="h-[120px]">
             <ResponsiveContainer width="100%" height="100%">
-              <LineChart data={trendData}>
+              <LineChart data={DEFAULT_TREND}>
                 <XAxis dataKey="month" tick={{ fill: "hsl(220, 12%, 50%)", fontSize: 9 }} axisLine={false} tickLine={false} />
                 <YAxis hide domain={["dataMin - 10", "dataMax + 10"]} />
                 <Line type="monotone" dataKey="strength" stroke={COLORS.amber} strokeWidth={2} dot={{ fill: COLORS.amber, r: 2 }} />

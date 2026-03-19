@@ -180,6 +180,7 @@ class InsightResponse(BaseModel):
     recommendation: str
     follow_up_questions: list[str]
     chart_config: dict[str, Any]
+    chart_data: list[dict[str, Any]] = Field(default_factory=list)
     x_values: list[Any] = Field(default_factory=list)
     y_values: list[Any] = Field(default_factory=list)
     stats_summary: dict[str, Any] = Field(default_factory=dict)

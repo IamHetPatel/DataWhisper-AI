@@ -9,6 +9,7 @@ export interface ChatMessage {
   content: string;
   timestamp: Date;
   chartConfig?: ChartConfig;
+  
   reasoning?: ReasoningData;
   followUps?: string[];
 }
@@ -27,9 +28,9 @@ export interface ReasoningData {
   metric: string;
   method: string;
   chartType: string;
+  summary?: string[];
   auditLog?: string[];
   anomalies?: string[];
-  recommendations?: string;
   stats?: Record<string, number>;
 }
 
