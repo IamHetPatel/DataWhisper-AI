@@ -4,92 +4,89 @@ from typing import Any, Literal
 from pydantic import BaseModel, ConfigDict, Field
 
 
-class IntentCategory(str, Enum):
-    validation_compliance = "validation_compliance"
+# ---------------------------------------------------------------------------
+# New QueryPlannerSchema models (primary data contract for the revamped API)
+# ---------------------------------------------------------------------------
+
+class QueryIntent(str, Enum):
+    lookup = "lookup"
     comparison = "comparison"
     trend_drift = "trend_drift"
-    hypothesis = "hypothesis"
     anomaly_check = "anomaly_check"
-    data_selection = "data_selection"
+    validation_compliance = "validation_compliance"
+    hypothesis = "hypothesis"
     summary = "summary"
+    clarification_needed = "clarification_needed"
 
+
+class PlannerFilter(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    field_path: str
+    operator: Literal["eq", "in", "gte", "lte", "regex"]
+    value: Any
+
+
+class MetricSpec(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    human_label: str
+    resolved_uuid: str
+    source_collection: Literal["tests", "values"] = "values"
+
+
+class DataResolution(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    target_collections: list[Literal["tests", "values"]]
+    filters: list[PlannerFilter] = Field(default_factory=list)
+    metrics: list[MetricSpec] = Field(default_factory=list)
+
+
+class AnalyticalOperation(str, Enum):
+    raw_fetch = "raw_fetch"
+    count = "count"
+    welch_t_test = "welch_t_test"
+    iqr_outlier = "iqr_outlier"
+    linear_regression = "linear_regression"
+    standard_deviation = "standard_deviation"
+
+
+class AnalyticalEngine(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    operation: AnalyticalOperation
+    grouping_dimension: str | None = None
+    time_series_interval: Literal["day", "week", "month"] | None = None
+
+
+class UIRenderingContract(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    presentation_type: Literal[
+        "data_table", "box_plot", "line_chart", "scatter_plot", "compliance_badge", "text_only"
+    ]
+    x_axis_mapping: str | None = None
+    y_axis_mapping: str | None = None
+    summary_text_directive: str
+
+
+class QueryPlannerSchema(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    query_intent: QueryIntent
+    data_resolution: DataResolution
+    analytical_engine: AnalyticalEngine
+    ui_rendering_contract: UIRenderingContract
+
+
+# ---------------------------------------------------------------------------
+# Shared collection / query execution models (used by mongo_executor)
+# ---------------------------------------------------------------------------
 
 class CollectionName(str, Enum):
     tests = "Tests"
     values = "Values"
-
-
-class PlanOperation(str, Enum):
-    filtering = "filtering"
-    aggregation = "aggregation"
-    grouping = "grouping"
-    time_series_extract = "time_series_extract"
-    statistics = "statistics"
-    compliance_check = "compliance_check"
-    anomaly_scan = "anomaly_scan"
-    hypothesis_probe = "hypothesis_probe"
-
-
-class StatMethod(str, Enum):
-    descriptive = "descriptive"
-    t_test = "t_test"
-    mann_whitney = "mann_whitney"
-    rolling_mean = "rolling_mean"
-    linear_slope = "linear_slope"
-    z_score = "z_score"
-    change_point_heuristic = "change_point_heuristic"
-    threshold_check = "threshold_check"
-
-
-class FilterSpec(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    field: str
-    operator: Literal[
-        "eq",
-        "neq",
-        "lt",
-        "lte",
-        "gt",
-        "gte",
-        "in",
-        "contains",
-        "between",
-        "regex",
-    ]
-    value: Any
-
-
-class InvestigationPlan(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    user_question: str
-    normalized_question: str
-    intent: IntentCategory
-    required_collections: list[CollectionName]
-    fields_needed: list[str] = Field(default_factory=list)
-    operations: list[PlanOperation] = Field(default_factory=list)
-    statistics_methods: list[StatMethod] = Field(default_factory=list)
-    chart_needed: bool = False
-    assumptions: list[str] = Field(default_factory=list)
-    reasoning_steps: list[str] = Field(default_factory=list)
-    follow_up_focus: list[str] = Field(default_factory=list)
-    filters: list[FilterSpec] = Field(default_factory=list)
-    confidence: float = Field(default=0.7, ge=0.0, le=1.0)
-
-
-class PlannerRequest(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    question: str = Field(min_length=3)
-    context: dict[str, Any] = Field(default_factory=dict)
-
-
-class PlannerResponse(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    plan: InvestigationPlan
-    semantic_candidates: list[dict[str, Any]] = Field(default_factory=list)
 
 
 class MongoQueryCandidate(BaseModel):
@@ -99,14 +96,6 @@ class MongoQueryCandidate(BaseModel):
     pipeline: list[dict[str, Any]]
     explanation: str
     expected_shape: list[str] = Field(default_factory=list)
-
-
-class QueryRunRequest(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    plan: InvestigationPlan
-    max_repairs: int | None = Field(default=None, ge=0, le=5)
-    semantic_candidates: list[dict[str, Any]] = Field(default_factory=list)
 
 
 class QueryAttempt(BaseModel):
@@ -129,10 +118,34 @@ class QueryRunResponse(BaseModel):
     corrected_automatically: bool
 
 
+# ---------------------------------------------------------------------------
+# API request / response schemas
+# ---------------------------------------------------------------------------
+
+class PlannerRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    question: str = Field(min_length=3)
+    context: dict[str, Any] = Field(default_factory=dict)
+
+
+class PlannerResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    plan: QueryPlannerSchema
+
+
+class QueryRunRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    plan: QueryPlannerSchema
+    max_repairs: int | None = Field(default=None, ge=0, le=5)
+
+
 class InsightRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    plan: InvestigationPlan
+    plan: QueryPlannerSchema
     rows: list[dict[str, Any]] = Field(default_factory=list)
     stats: dict[str, Any] = Field(default_factory=dict)
 

@@ -1,0 +1,7 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(find /Users/hetpatel/Downloads/StartHack_viraj-main -maxdepth 3 -not -path */.* -not -path */.venv* -not -path */__pycache__* -type f)"
+    ]
+  }
+}

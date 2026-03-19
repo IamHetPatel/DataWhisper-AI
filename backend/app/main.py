@@ -56,7 +56,7 @@ def health() -> dict[str, str]:
         "query_mode": settings.query_mode,
         "insight_mode": settings.insight_mode,
         "llm_provider": settings.llm_provider,
-        "anthropic_ready": "yes" if bool(settings.anthropic_api_key) else "no",
+        "openai_ready": "yes" if bool(settings.openai_api_key) else "no",
         "mapped_terms_count": str(len(mapper.get_all_mappings()))
     }
 
