@@ -219,6 +219,7 @@ def _build_insight_mock(
         ),
         follow_up_questions=_follow_ups_for_intent(plan.query_intent),
         chart_config=_chart_for_plan(plan),
+        chart_data=rows,
         audit_log=audit_log,
     )
 
@@ -324,6 +325,7 @@ def _build_insight_llm(
             recommendation=recommendation,
             follow_up_questions=follow_ups,
             chart_config=chart_config,
+            chart_data=rows,
             audit_log=audit_log,
         )
     except Exception:  # noqa: BLE001

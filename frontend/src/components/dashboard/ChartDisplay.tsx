@@ -91,33 +91,70 @@ export function ChartDisplay({ chart, onGenerateReport }: ChartDisplayProps) {
 
       {/* Main Chart */}
       <div className="h-[280px]">
-        <ResponsiveContainer width="100%" height="100%">
-          {activeChart.type === "bar" ? (
-            <BarChart data={activeChart.data?.length ? activeChart.data : comparisonData}>
-              <CartesianGrid strokeDasharray="3 3" stroke="hsl(220, 16%, 16%)" />
-              <XAxis dataKey={activeChart.xKey || "name"} tick={{ fill: "hsl(220, 12%, 50%)", fontSize: 11 }} axisLine={{ stroke: "hsl(220, 16%, 18%)" }} />
-              <YAxis tick={{ fill: "hsl(220, 12%, 50%)", fontSize: 11 }} axisLine={{ stroke: "hsl(220, 16%, 18%)" }} />
-              <Tooltip {...tooltipStyle} />
-              <Legend wrapperStyle={{ fontSize: 11 }} />
-              <Bar dataKey="machineA" name="Machine A" fill={COLORS.blue} radius={[4, 4, 0, 0]} />
-              <Bar dataKey="machineB" name="Machine B" fill={COLORS.green} radius={[4, 4, 0, 0]} />
-            </BarChart>
-          ) : (
-            <AreaChart data={activeChart.data?.length ? activeChart.data : forceStrainData}>
-              <defs>
-                <linearGradient id="fillPrimary" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="5%" stopColor={COLORS.blue} stopOpacity={0.25} />
-                  <stop offset="95%" stopColor={COLORS.blue} stopOpacity={0} />
-                </linearGradient>
-              </defs>
-              <CartesianGrid strokeDasharray="3 3" stroke="hsl(220, 16%, 16%)" />
-              <XAxis dataKey={activeChart.xKey || "strain"} tick={{ fill: "hsl(220, 12%, 50%)", fontSize: 11 }} axisLine={{ stroke: "hsl(220, 16%, 18%)" }} label={{ value: activeChart.xKey === "month" ? "Month" : "Strain (%)", position: "insideBottom", offset: -2, fill: "hsl(220, 12%, 50%)", fontSize: 11 }} />
-              <YAxis tick={{ fill: "hsl(220, 12%, 50%)", fontSize: 11 }} axisLine={{ stroke: "hsl(220, 16%, 18%)" }} label={{ value: "Force (N)", angle: -90, position: "insideLeft", fill: "hsl(220, 12%, 50%)", fontSize: 11 }} />
-              <Tooltip {...tooltipStyle} />
-              <Area type="monotone" dataKey={activeChart.yKey || "force"} stroke={COLORS.blue} fill="url(#fillPrimary)" strokeWidth={2} dot={{ fill: COLORS.blue, r: 3 }} />
-            </AreaChart>
-          )}
-        </ResponsiveContainer>
+        {activeChart.type === "table" ? (
+          <div className="h-full overflow-auto rounded-md border border-border scrollbar-thin">
+            <table className="w-full text-sm text-left whitespace-nowrap">
+              <thead className="text-xs uppercase bg-secondary/50 sticky top-0 z-10 backdrop-blur-sm">
+                <tr>
+                  {Object.keys(activeChart.data?.[0] || {}).map((k) => (
+                    <th key={k} className="px-4 py-3 font-medium text-muted-foreground">{k}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-border">
+                {(activeChart.data || []).slice(0, 50).map((row, i) => (
+                  <tr key={i} className="hover:bg-muted/20 transition-colors">
+                    {Object.values(row).map((val: any, j) => (
+                      <td key={j} className="px-4 py-2 text-foreground truncate max-w-[250px]">
+                        {typeof val === "number" ? parseFloat(val.toFixed(4)).toString() : String(val ?? "-")}
+                      </td>
+                    ))}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+            {(!activeChart.data || activeChart.data.length === 0) && (
+              <div className="flex h-full items-center justify-center text-sm text-muted-foreground">
+                No data available to display in table.
+              </div>
+            )}
+          </div>
+        ) : (
+          <ResponsiveContainer width="100%" height="100%">
+            {activeChart.type === "scatter" ? (
+              <ScatterChart margin={{ top: 10, right: 30, bottom: 20, left: 10 }}>
+                <CartesianGrid strokeDasharray="3 3" stroke="hsl(220, 16%, 16%)" />
+                <XAxis dataKey={activeChart.xKey || "index"} name={activeChart.xKey || "Index"} tick={{ fill: "hsl(220, 12%, 50%)", fontSize: 11 }} axisLine={{ stroke: "hsl(220, 16%, 18%)" }} />
+                <YAxis dataKey={activeChart.yKey || "value"} name={activeChart.yKey || "Value"} tick={{ fill: "hsl(220, 12%, 50%)", fontSize: 11 }} axisLine={{ stroke: "hsl(220, 16%, 18%)" }} />
+                <Tooltip {...tooltipStyle} cursor={{ strokeDasharray: "3 3" }} />
+                <Scatter name="Data" data={activeChart.data} fill={COLORS.amber} />
+              </ScatterChart>
+            ) : activeChart.type === "bar" ? (
+              <BarChart data={activeChart.data?.length ? activeChart.data : comparisonData} margin={{ top: 10, right: 10, bottom: 20, left: 0 }}>
+                <CartesianGrid strokeDasharray="3 3" stroke="hsl(220, 16%, 16%)" />
+                <XAxis dataKey={activeChart.xKey || "name"} tick={{ fill: "hsl(220, 12%, 50%)", fontSize: 11 }} axisLine={{ stroke: "hsl(220, 16%, 18%)" }} />
+                <YAxis tick={{ fill: "hsl(220, 12%, 50%)", fontSize: 11 }} axisLine={{ stroke: "hsl(220, 16%, 18%)" }} />
+                <Tooltip {...tooltipStyle} />
+                <Legend wrapperStyle={{ fontSize: 11 }} />
+                <Bar dataKey={activeChart.yKey || "mean"} fill={COLORS.blue} radius={[4, 4, 0, 0]} />
+              </BarChart>
+            ) : (
+              <AreaChart data={activeChart.data?.length ? activeChart.data : forceStrainData} margin={{ top: 10, right: 10, bottom: 20, left: 0 }}>
+                <defs>
+                  <linearGradient id="fillPrimary" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="5%" stopColor={COLORS.blue} stopOpacity={0.25} />
+                    <stop offset="95%" stopColor={COLORS.blue} stopOpacity={0} />
+                  </linearGradient>
+                </defs>
+                <CartesianGrid strokeDasharray="3 3" stroke="hsl(220, 16%, 16%)" />
+                <XAxis dataKey={activeChart.xKey || "strain"} tick={{ fill: "hsl(220, 12%, 50%)", fontSize: 11 }} axisLine={{ stroke: "hsl(220, 16%, 18%)" }} />
+                <YAxis tick={{ fill: "hsl(220, 12%, 50%)", fontSize: 11 }} axisLine={{ stroke: "hsl(220, 16%, 18%)" }} />
+                <Tooltip {...tooltipStyle} />
+                <Area type="monotone" dataKey={activeChart.yKey || "avg_value"} stroke={COLORS.blue} fill="url(#fillPrimary)" strokeWidth={2} dot={{ fill: COLORS.blue, r: 3 }} />
+              </AreaChart>
+            )}
+          </ResponsiveContainer>
+        )}
       </div>
 
       {/* Secondary charts row */}

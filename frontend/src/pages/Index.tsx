@@ -4,6 +4,7 @@ import { ChatPanel, type ChatMessage, type ChartConfig, type ReasoningData } fro
 import { ChartDisplay } from "@/components/dashboard/ChartDisplay";
 import { ReasoningPanel } from "@/components/dashboard/ReasoningPanel";
 import { ReportModal } from "@/components/dashboard/ReportModal";
+import { v4 as uuidv4 } from "uuid";
 // Simulated AI responses for demo
 const demoResponses: Record<string, { content: string; chartConfig?: ChartConfig; reasoning?: ReasoningData; followUps: string[] }> = {
   default: {
@@ -58,7 +59,7 @@ export default function Index() {
     if (!text.trim()) return;
 
     const userMsg: ChatMessage = {
-      id: crypto.randomUUID(),
+      id: uuidv4(),
       role: "user",
       content: text,
       timestamp: new Date(),
@@ -87,24 +88,49 @@ export default function Index() {
       const markdownContent = data.summary_3_sentences.join(" ") + 
                               "\n\n**Recommendation:** " + data.recommendation;
 
+      let extractedStats = undefined;
+      if (data.chart_data && data.chart_data.length > 0) {
+        const firstRow = data.chart_data[0];
+        if (firstRow && typeof firstRow.mean === "number") {
+          extractedStats = {
+            mean: firstRow.mean,
+            std: firstRow.stdDev,
+            count: firstRow.count,
+            min: firstRow.min,
+            max: firstRow.max,
+          };
+        } else if (firstRow && typeof firstRow.total === "number") {
+          extractedStats = { total: firstRow.total };
+        }
+      }
+
+      const getAuditVal = (prefix: string, def: string) => {
+        const log = data.audit_log?.find((l: string) => l.startsWith(prefix));
+        return log ? log.replace(prefix, "").trim() : def;
+      };
+
       const uiReasoning: ReasoningData = {
-        intent: "Backend Analysis",
+        intent: getAuditVal("Intent:", "Backend Analysis"),
         dataUsed: "Live MongoDB Data",
-        metric: "Auto-computed",
-        method: "LangChain Pipeline",
-        chartType: "Dynamic",
+        metric: getAuditVal("Metrics:", "Auto-computed"),
+        method: getAuditVal("Operation:", "LangChain Pipeline"),
+        chartType: data.chart_config?.type || "Dynamic",
         auditLog: data.audit_log,
         anomalies: data.anomaly_notes,
         recommendations: data.recommendation,
-        stats: {} // Could map from backend if provided in a later PR
+        stats: extractedStats, // dynamically populated from MongoDB rows!
       };
 
+      const chartConfigObj = Object.keys(data.chart_config).length > 0
+        ? { ...data.chart_config, data: data.chart_data || [] } as ChartConfig
+        : undefined;
+
       const aiMsg: ChatMessage = {
-        id: crypto.randomUUID(),
+        id: uuidv4(),
         role: "assistant",
         content: markdownContent,
         timestamp: new Date(),
-        chartConfig: Object.keys(data.chart_config).length > 0 ? (data.chart_config as ChartConfig) : undefined,
+        chartConfig: chartConfigObj,
         reasoning: uiReasoning,
         followUps: data.follow_up_questions,
       };
@@ -116,7 +142,7 @@ export default function Index() {
     } catch (error) {
       console.error("Fetch failed:", error);
       const errorMsg: ChatMessage = {
-        id: crypto.randomUUID(),
+        id: uuidv4(),
         role: "assistant",
         content: "🚨 Failed to connect to the backend API (" + import.meta.env.VITE_API_URL + "/query). Please ensure the FastAPI server is running.",
         timestamp: new Date(),
@@ -143,9 +169,11 @@ export default function Index() {
         </div>
 
         {/* Chart area */}
-        {(messages.length > 0 || true) && (
-          <div className="border-t border-border p-4 shrink-0 overflow-y-auto" style={{ maxHeight: "55%" }}>
-            <ChartDisplay chart={activeChart} onGenerateReport={() => setReportOpen(true)} />
+        {activeChart && (
+          <div className="border-t border-border p-4 shrink-0 flex flex-col min-h-0" style={{ maxHeight: "55%" }}>
+            <div className="flex-1 overflow-y-auto scrollbar-thin rounded-xl">
+              <ChartDisplay chart={activeChart} onGenerateReport={() => setReportOpen(true)} />
+            </div>
           </div>
         )}
       </div>

@@ -1,7 +1,7 @@
 import { motion, AnimatePresence } from "framer-motion";
 import { X, Download, FileText, AlertTriangle, Lightbulb, BarChart3, ClipboardList } from "lucide-react";
 import {
-  AreaChart, Area, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend,
+  AreaChart, Area, BarChart, Bar, ScatterChart, Scatter, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend,
 } from "recharts";
 import type { ReasoningData, ChartConfig } from "./ChatPanel";
 
@@ -15,22 +15,23 @@ interface ReportModalProps {
 const COLORS = {
   blue: "hsl(199, 89%, 48%)",
   green: "hsl(160, 84%, 39%)",
+  amber: "hsl(38, 92%, 50%)",
 };
 
-const defaultStats = { mean: 714.2, std: 18.7, count: 847, min: 392, max: 745 };
-
-const forceStrainData = [
-  { strain: 0, force: 0 }, { strain: 0.5, force: 120 }, { strain: 1.0, force: 310 },
-  { strain: 1.5, force: 480 }, { strain: 2.0, force: 590 }, { strain: 2.5, force: 650 },
-  { strain: 3.0, force: 680 }, { strain: 3.5, force: 695 }, { strain: 4.0, force: 700 },
-  { strain: 4.5, force: 690 }, { strain: 5.0, force: 620 }, { strain: 5.5, force: 480 },
-  { strain: 6.0, force: 0 },
-];
-
 export function ReportModal({ open, onClose, reasoning, chart }: ReportModalProps) {
-  const stats = reasoning?.stats || defaultStats;
-  const anomalies = reasoning?.anomalies || ["Sample #412 — force 45% below mean (possible grip slip)"];
-  const recommendation = reasoning?.recommendations || "Inspect Machine B calibration logs. Re-test flagged specimens.";
+  const stats = reasoning?.stats || {};
+  const anomalies = reasoning?.anomalies || [];
+  const recommendation = reasoning?.recommendations || "No recommendations generated.";
+  
+  const tooltipStyle = {
+    contentStyle: {
+      backgroundColor: "hsl(220, 18%, 12%)",
+      border: "1px solid hsl(220, 16%, 18%)",
+      borderRadius: "8px",
+      fontSize: "12px",
+      color: "hsl(220, 15%, 90%)",
+    },
+  };
 
   return (
     <AnimatePresence>
@@ -82,29 +83,80 @@ export function ReportModal({ open, onClose, reasoning, chart }: ReportModalProp
               </section>
 
               {/* Chart */}
-              <section>
-                <h3 className="text-sm font-semibold text-foreground mb-3 flex items-center gap-2">
-                  <BarChart3 className="w-4 h-4 text-primary" />
-                  Force vs Strain Curve
-                </h3>
-                <div className="bg-muted/20 rounded-xl p-4 h-[260px]">
-                  <ResponsiveContainer width="100%" height="100%">
-                    <AreaChart data={forceStrainData}>
-                      <defs>
-                        <linearGradient id="reportFill" x1="0" y1="0" x2="0" y2="1">
-                          <stop offset="5%" stopColor={COLORS.blue} stopOpacity={0.3} />
-                          <stop offset="95%" stopColor={COLORS.blue} stopOpacity={0} />
-                        </linearGradient>
-                      </defs>
-                      <CartesianGrid strokeDasharray="3 3" stroke="hsl(220, 16%, 16%)" />
-                      <XAxis dataKey="strain" tick={{ fill: "hsl(220, 12%, 50%)", fontSize: 11 }} label={{ value: "Strain (%)", position: "insideBottom", offset: -2, fill: "hsl(220, 12%, 50%)", fontSize: 11 }} />
-                      <YAxis tick={{ fill: "hsl(220, 12%, 50%)", fontSize: 11 }} label={{ value: "Force (N)", angle: -90, position: "insideLeft", fill: "hsl(220, 12%, 50%)", fontSize: 11 }} />
-                      <Tooltip contentStyle={{ backgroundColor: "hsl(220, 18%, 12%)", border: "1px solid hsl(220, 16%, 18%)", borderRadius: "8px", fontSize: "12px", color: "hsl(220, 15%, 90%)" }} />
-                      <Area type="monotone" dataKey="force" stroke={COLORS.blue} fill="url(#reportFill)" strokeWidth={2} dot={{ fill: COLORS.blue, r: 3 }} />
-                    </AreaChart>
-                  </ResponsiveContainer>
-                </div>
-              </section>
+              {chart && (
+                <section>
+                  <h3 className="text-sm font-semibold text-foreground mb-3 flex items-center gap-2">
+                    <BarChart3 className="w-4 h-4 text-primary" />
+                    {chart.title}
+                  </h3>
+                  <div className="bg-muted/20 rounded-xl p-4 h-[300px]">
+                    {chart.type === "table" ? (
+                      <div className="h-full overflow-auto rounded-md border border-border scrollbar-thin">
+                        <table className="w-full text-sm text-left whitespace-nowrap">
+                          <thead className="text-xs uppercase bg-secondary/50 sticky top-0 z-10 backdrop-blur-sm">
+                            <tr>
+                              {Object.keys(chart.data?.[0] || {}).map((k) => (
+                                <th key={k} className="px-4 py-3 font-medium text-muted-foreground">{k}</th>
+                              ))}
+                            </tr>
+                          </thead>
+                          <tbody className="divide-y divide-border">
+                            {(chart.data || []).slice(0, 50).map((row, i) => (
+                              <tr key={i} className="hover:bg-muted/20 transition-colors">
+                                {Object.values(row).map((val: any, j) => (
+                                  <td key={j} className="px-4 py-2 text-foreground truncate max-w-[250px]">
+                                    {typeof val === "number" ? parseFloat(val.toFixed(4)).toString() : String(val ?? "-")}
+                                  </td>
+                                ))}
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                        {(!chart.data || chart.data.length === 0) && (
+                          <div className="flex h-full items-center justify-center text-sm text-muted-foreground">
+                            No data available to display in table.
+                          </div>
+                        )}
+                      </div>
+                    ) : (
+                      <ResponsiveContainer width="100%" height="100%">
+                        {chart.type === "scatter" ? (
+                          <ScatterChart margin={{ top: 10, right: 30, bottom: 20, left: 10 }}>
+                            <CartesianGrid strokeDasharray="3 3" stroke="hsl(220, 16%, 16%)" />
+                            <XAxis dataKey={chart.xKey || "index"} name={chart.xKey || "Index"} tick={{ fill: "hsl(220, 12%, 50%)", fontSize: 11 }} axisLine={{ stroke: "hsl(220, 16%, 18%)" }} />
+                            <YAxis dataKey={chart.yKey || "value"} name={chart.yKey || "Value"} tick={{ fill: "hsl(220, 12%, 50%)", fontSize: 11 }} axisLine={{ stroke: "hsl(220, 16%, 18%)" }} />
+                            <Tooltip {...tooltipStyle} cursor={{ strokeDasharray: "3 3" }} />
+                            <Scatter name="Data" data={chart.data} fill={COLORS.amber} />
+                          </ScatterChart>
+                        ) : chart.type === "bar" ? (
+                          <BarChart data={chart.data} margin={{ top: 10, right: 10, bottom: 20, left: 0 }}>
+                            <CartesianGrid strokeDasharray="3 3" stroke="hsl(220, 16%, 16%)" />
+                            <XAxis dataKey={chart.xKey || "name"} tick={{ fill: "hsl(220, 12%, 50%)", fontSize: 11 }} axisLine={{ stroke: "hsl(220, 16%, 18%)" }} />
+                            <YAxis tick={{ fill: "hsl(220, 12%, 50%)", fontSize: 11 }} axisLine={{ stroke: "hsl(220, 16%, 18%)" }} />
+                            <Tooltip {...tooltipStyle} />
+                            <Legend wrapperStyle={{ fontSize: 11 }} />
+                            <Bar dataKey={chart.yKey || "mean"} fill={COLORS.blue} radius={[4, 4, 0, 0]} />
+                          </BarChart>
+                        ) : (
+                          <AreaChart data={chart.data} margin={{ top: 10, right: 10, bottom: 20, left: 0 }}>
+                            <defs>
+                              <linearGradient id="reportFill" x1="0" y1="0" x2="0" y2="1">
+                                <stop offset="5%" stopColor={COLORS.blue} stopOpacity={0.3} />
+                                <stop offset="95%" stopColor={COLORS.blue} stopOpacity={0} />
+                              </linearGradient>
+                            </defs>
+                            <CartesianGrid strokeDasharray="3 3" stroke="hsl(220, 16%, 16%)" />
+                            <XAxis dataKey={chart.xKey || "strain"} tick={{ fill: "hsl(220, 12%, 50%)", fontSize: 11 }} axisLine={{ stroke: "hsl(220, 16%, 18%)" }} />
+                            <YAxis tick={{ fill: "hsl(220, 12%, 50%)", fontSize: 11 }} axisLine={{ stroke: "hsl(220, 16%, 18%)" }} />
+                            <Tooltip {...tooltipStyle} />
+                            <Area type="monotone" dataKey={chart.yKey || "avg_value"} stroke={COLORS.blue} fill="url(#reportFill)" strokeWidth={2} dot={{ fill: COLORS.blue, r: 3 }} />
+                          </AreaChart>
+                        )}
+                      </ResponsiveContainer>
+                    )}
+                  </div>
+                </section>
+              )}
 
               {/* Statistics */}
               <section>
