@@ -98,10 +98,10 @@ export function LeftSidebar({ collapsed, onToggle, onQuerySelect, onNewChat }: L
               exit={{ opacity: 0 }}
               className="flex items-center gap-2"
             >
-              <div className="w-7 h-7 rounded-lg bg-primary/20 flex items-center justify-center">
-                <FlaskConical className="w-4 h-4 text-primary" />
+              <div className="w-7 h-7 rounded-lg flex items-center justify-center bg-white">
+                <img src="/public/favicon.ico" alt="Logo" className="w-6 h-6" />
               </div>
-              <span className="text-sm font-semibold text-foreground tracking-tight">ZwickRoell AI</span>
+              <span className="text-sm font-semibold text-foreground tracking-tight">D-Whisper AI</span>
             </motion.div>
           )}
         </AnimatePresence>
