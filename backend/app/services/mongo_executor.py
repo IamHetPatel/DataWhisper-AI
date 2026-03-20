@@ -33,6 +33,9 @@ def _is_tests_scope(field_path: str) -> bool:
     """True if field_path belongs to the _tests collection."""
     if not field_path:
         return False
+    # Sentinel date-range keys handled separately in linear_regression post-group
+    if field_path in {"_date_from", "_date_to"}:
+        return False
     if field_path.startswith("TestParametersFlat."):
         return True
     return field_path in {"name", "state", "testProgramId", "_id"}
@@ -96,6 +99,13 @@ def _build_match_from_planner_filters(
         field = f"{prefix}{f.field_path}" if prefix else f.field_path
         val = f.value
         op = f.operator
+
+        # TestParametersFlat.Date is stored as mixed string formats (DD.MM.YYYY, MM/DD/YYYY, etc.)
+        # Comparing it against a Python datetime (ISODate) always returns 0 results because
+        # BSON type ordering puts strings below dates. Date filtering on this field is handled
+        # post-group via the _date_from/_date_to sentinels instead.
+        if "TestParametersFlat.Date" in field:
+            continue
 
         if _should_coerce_date(field):
             if isinstance(val, list):
@@ -175,8 +185,12 @@ class MongoExecutor:
                     "$match": {"metadata.childId": {"$regex": regex_pattern, "$options": "i"}}
                 })
 
+        # Sentinels used only post-group in linear_regression — exclude from all $match stages
+        _SENTINELS = {"_date_from", "_date_to"}
+
         # 2. Apply value-scope filters (e.g., uploadDate ranges)
-        value_filters = [f for f in plan.data_resolution.filters if not _is_tests_scope(f.field_path)]
+        value_filters = [f for f in plan.data_resolution.filters
+                         if not _is_tests_scope(f.field_path) and f.field_path not in _SENTINELS]
         if value_filters:
             match = _build_match_from_planner_filters(value_filters)
             if match:
@@ -185,7 +199,8 @@ class MongoExecutor:
         # 3. Lookup tests collection if needed for test-scope filters, grouping, or trend dates.
         # linear_regression always needs the join: uploadDate is the import date (same for all
         # docs) so TestParametersFlat.Date (the actual test date) is required for meaningful trends.
-        test_filters = [f for f in plan.data_resolution.filters if _is_tests_scope(f.field_path)]
+        test_filters = [f for f in plan.data_resolution.filters
+                        if _is_tests_scope(f.field_path) and f.field_path not in _SENTINELS]
         grouping_needs_test = bool(grouping_dim) and _is_tests_scope(grouping_dim or "")
         needs_test_join = bool(test_filters) or grouping_needs_test or op == AnalyticalOperation.linear_regression
 
@@ -269,8 +284,9 @@ class MongoExecutor:
             pipeline.append({"$limit": 50})
 
         elif op == AnalyticalOperation.linear_regression:
-            # Compute per-document average first (avoids $unwind on huge arrays)
-            pipeline.append({"$limit": 5000})
+            # No $limit here — the $group stage collapses all docs into date buckets (small output).
+            # A $limit before the join would cut off recently-inserted docs (2025 data appears last).
+            # allowDiskUse=True handles memory pressure for large collections.
             pipeline.append({"$project": {
                 "uploadDate": 1,
                 "metadata": 1,
@@ -302,24 +318,42 @@ class MongoExecutor:
             # Use the actual test date (TestParametersFlat.Date = "DD.MM.YYYY") when the
             # _tests join is present — uploadDate is the import date (same for all docs).
             # Fall back to uploadDate only when no join was performed.
-            interval = plan.analytical_engine.time_series_interval or "week"
+            interval = plan.analytical_engine.time_series_interval or "day"
             if needs_test_join:
-                # $dateFromString throws if the input is not a string (e.g. missing field,
-                # ISODate object, number). Wrap in $convert→string first so the input to
-                # $dateFromString is always a string or ""; then onError/onNull handle the rest.
+                # TestParametersFlat.Date is stored in mixed formats across documents:
+                #   DD.MM.YYYY  (separator at pos 2 = ".")   e.g. "01.07.2024"
+                #   MM/DD/YYYY  (separator at pos 2 = "/")   e.g. "07/12/2023"
+                #   M/D/YYYY    (separator at pos 1 = "/")   e.g. "6/6/2024"
+                # Use $switch on the separator character to pick the right format.
+                # $convert→string first prevents $dateFromString from throwing on non-string types.
+                _str_date = {"$convert": {
+                    "input": "$test.TestParametersFlat.Date",
+                    "to": "string",
+                    "onError": "",
+                    "onNull": "",
+                }}
                 date_expr = {
-                    "$dateFromString": {
-                        "dateString": {
-                            "$convert": {
-                                "input": "$test.TestParametersFlat.Date",
-                                "to": "string",
-                                "onError": "",
-                                "onNull": "",
+                    "$let": {
+                        "vars": {"s": _str_date},
+                        "in": {
+                            "$switch": {
+                                "branches": [
+                                    {
+                                        "case": {"$eq": [{"$substr": ["$$s", 2, 1]}, "."]},
+                                        "then": {"$dateFromString": {"dateString": "$$s", "format": "%d.%m.%Y", "onError": None, "onNull": None}},
+                                    },
+                                    {
+                                        "case": {"$eq": [{"$substr": ["$$s", 2, 1]}, "/"]},
+                                        "then": {"$dateFromString": {"dateString": "$$s", "format": "%m/%d/%Y", "onError": None, "onNull": None}},
+                                    },
+                                    {
+                                        "case": {"$eq": [{"$substr": ["$$s", 1, 1]}, "/"]},
+                                        "then": {"$dateFromString": {"dateString": "$$s", "format": "%m/%d/%Y", "onError": None, "onNull": None}},
+                                    },
+                                ],
+                                "default": {"$dateFromString": {"dateString": "$$s", "onError": None, "onNull": None}},
                             }
                         },
-                        "format": "%d.%m.%Y",
-                        "onError": None,
-                        "onNull": None,
                     }
                 }
             else:
@@ -328,7 +362,7 @@ class MongoExecutor:
             group_id: Any = {
                 "date": {
                     "$dateToString": {
-                        "format": "%Y-%m-%d" if interval == "day" else "%Y-%W",
+                        "format": "%Y-%m-%d" if interval == "day" else "%Y-%m",
                         "date": date_expr,
                     }
                 }
@@ -343,6 +377,17 @@ class MongoExecutor:
             }})
             # Drop buckets where date parsed to null (missing/invalid date field)
             pipeline.append({"$match": {"_id.date": {"$ne": None}}})
+
+            # Apply explicit date range from planner sentinels (post-group ISO string compare)
+            date_range_match: dict[str, Any] = {}
+            for f in plan.data_resolution.filters:
+                if f.field_path == "_date_from" and f.value:
+                    date_range_match.setdefault("_id.date", {})["$gte"] = str(f.value)
+                elif f.field_path == "_date_to" and f.value:
+                    date_range_match.setdefault("_id.date", {})["$lte"] = str(f.value)
+            if date_range_match:
+                pipeline.append({"$match": date_range_match})
+
             pipeline.append({"$sort": {"_id.date": 1}})
             pipeline.append({"$limit": min(500, self.settings.max_query_rows)})
 

@@ -1,4 +1,5 @@
 import re
+from datetime import datetime
 from typing import Any
 
 from app.config import get_settings
@@ -134,6 +135,30 @@ def _extract_filters(q: str) -> list[PlannerFilter]:
             operator="eq",
             value="flexure",
         ))
+
+    # Date range: "from DD/MM/YYYY to DD/MM/YYYY", "between ...", "DD.MM.YYYY to DD.MM.YYYY", etc.
+    # Parse any two explicit dates in the question and store as ISO YYYY-MM-DD sentinels.
+    raw_dates = re.findall(r'\b(\d{1,2}[./]\d{1,2}[./]\d{4})\b', q)
+    if len(raw_dates) >= 2:
+        parsed: list[tuple[str, datetime]] = []
+        for raw in raw_dates[:2]:
+            sep = raw[2] if len(raw) > 2 else ""
+            try:
+                if sep == ".":
+                    dt = datetime.strptime(raw, "%d.%m.%Y")
+                else:
+                    # Try DD/MM/YYYY first (user input convention), then MM/DD/YYYY
+                    try:
+                        dt = datetime.strptime(raw, "%d/%m/%Y")
+                    except ValueError:
+                        dt = datetime.strptime(raw, "%m/%d/%Y")
+                parsed.append((raw, dt))
+            except ValueError:
+                pass
+        if len(parsed) == 2:
+            dates_sorted = sorted(parsed, key=lambda x: x[1])
+            filters.append(PlannerFilter(field_path="_date_from", operator="gte", value=dates_sorted[0][1].strftime("%Y-%m-%d")))
+            filters.append(PlannerFilter(field_path="_date_to", operator="lte", value=dates_sorted[1][1].strftime("%Y-%m-%d")))
 
     return filters
 
@@ -292,8 +317,30 @@ def _validate_and_normalize_plan(raw: dict[str, Any], question: str) -> QueryPla
             fp = f.get("field_path") or f.get("field")
             op = f.get("operator", "eq")
             val = f.get("value")
-            if fp and op in valid_ops:
-                filters.append(PlannerFilter(field_path=str(fp), operator=op, value=val))
+            if not fp or op not in valid_ops:
+                continue
+            fp = str(fp)
+            # LLM often generates date range filters on uploadDate or TestParametersFlat.Date.
+            # uploadDate = import date (Feb 2026 for all docs) — useless for date range filtering.
+            # Both fields should become _date_from/_date_to sentinels applied post-group as ISO strings.
+            if fp in {"uploadDate", "TestParametersFlat.Date"} and op in {"gte", "lte"} and val is not None:
+                try:
+                    from datetime import timezone
+                    val_str = str(val).strip().lower()
+                    import re as _re
+                    m = _re.fullmatch(r"(?:last|past)\s+(\d+)\s*(day|days|week|weeks|month|months)", val_str)
+                    if m:
+                        amount, unit = int(m.group(1)), m.group(2)
+                        delta_days = amount if "day" in unit else amount * 7 if "week" in unit else amount * 30
+                        dt = datetime.utcnow() - __import__("datetime").timedelta(days=delta_days)
+                    else:
+                        dt = datetime.fromisoformat(val_str.replace("z", "+00:00"))
+                    sentinel = "_date_from" if op == "gte" else "_date_to"
+                    filters.append(PlannerFilter(field_path=sentinel, operator=op, value=dt.strftime("%Y-%m-%d")))
+                except Exception:
+                    pass  # skip unparseable date filters
+                continue
+            filters.append(PlannerFilter(field_path=fp, operator=op, value=val))
 
         metrics: list[MetricSpec] = []
         for m in (dr.get("metrics") or []):
@@ -329,8 +376,19 @@ def _validate_and_normalize_plan(raw: dict[str, Any], question: str) -> QueryPla
         pres = urc.get("presentation_type", "data_table")
         if pres not in valid_pres:
             pres = "data_table"
-        x_axis = urc.get("x_axis_mapping")
-        y_axis = urc.get("y_axis_mapping")
+        # Override LLM axis mappings with the actual MongoDB pipeline output field names.
+        # LLM commonly returns "uploadDate"/"values"/"value" which don't match pipeline output.
+        _INTENT_AXES: dict[str, tuple[str, str]] = {
+            "trend_drift": ("date", "avg_value"),
+            "comparison": ("_id", "mean"),
+            "hypothesis": ("_id", "mean"),
+            "anomaly_check": ("_id", "mean"),
+        }
+        if intent_raw in _INTENT_AXES:
+            x_axis, y_axis = _INTENT_AXES[intent_raw]
+        else:
+            x_axis = urc.get("x_axis_mapping")
+            y_axis = urc.get("y_axis_mapping")
         directive = urc.get("summary_text_directive") or f"Analyze the data for: {question}"
 
         return QueryPlannerSchema(
