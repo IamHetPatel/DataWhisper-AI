@@ -101,6 +101,38 @@ def load_semantic_dictionary(helper_root: str | None = None) -> SemanticDictiona
     )
 
 
+def get_canonical_channel(unit_table_ids: list[str]) -> str | None:
+    """
+    Pick the most canonical Zwick unit-table channel from the list.
+    Prefers channels without 'Per' (not derived ratios like ForcePerDisplacement),
+    then picks the shortest name.
+    Returns just the suffix, e.g. 'Force' from 'Zwick.Unittable.Force'.
+    """
+    if not unit_table_ids:
+        return None
+    # Strip the 'Zwick.Unittable.' prefix for comparison
+    suffixes = [(u.rsplit(".", 1)[-1], u) for u in unit_table_ids]
+    # Prefer non-derived (no 'Per' in suffix)
+    simple = [(s, full) for s, full in suffixes if "Per" not in s]
+    candidates = simple if simple else suffixes
+    # Among those, pick the shortest suffix
+    best_suffix, _ = min(candidates, key=lambda x: len(x[0]))
+    return best_suffix
+
+
+def get_canonical_channel_for_uuid(uuid: str) -> str | None:
+    """Look up the canonical channel for a known metric UUID."""
+    if not uuid:
+        return None
+    dictionary = load_semantic_dictionary()
+    uuid_lower = uuid.lower()
+    for entry_list in dictionary.results_by_name.values():
+        for entry in entry_list:
+            if entry.get("uuid", "").lower() == uuid_lower:
+                return get_canonical_channel(entry.get("unit_table_ids", []))
+    return None
+
+
 def resolve_user_term(term: str, limit: int = 8) -> list[dict[str, Any]]:
     dictionary = load_semantic_dictionary()
     query = _normalize(term)

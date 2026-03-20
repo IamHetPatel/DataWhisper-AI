@@ -33,6 +33,7 @@ class MetricSpec(BaseModel):
     human_label: str
     resolved_uuid: str
     source_collection: Literal["tests", "values"] = "values"
+    canonical_channel: str | None = None  # e.g. "Force" from "Zwick.Unittable.Force"
 
 
 class DataResolution(BaseModel):
@@ -184,4 +185,5 @@ class InsightResponse(BaseModel):
     x_values: list[Any] = Field(default_factory=list)
     y_values: list[Any] = Field(default_factory=list)
     stats_summary: dict[str, Any] = Field(default_factory=dict)
+    compliance_result: dict[str, Any] = Field(default_factory=dict)
     audit_log: list[str] = Field(default_factory=list)

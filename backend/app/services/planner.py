@@ -13,7 +13,7 @@ from app.schemas import (
     UIRenderingContract,
 )
 from app.services.llm_gateway import get_gateway
-from app.services.semantic_layer import resolve_user_term
+from app.services.semantic_layer import resolve_user_term, get_canonical_channel, get_canonical_channel_for_uuid
 
 
 def _normalize_question(question: str) -> str:
@@ -34,9 +34,17 @@ def _infer_intent(q: str) -> QueryIntent:
         r"\bimproving\b", r"\bchanging over\b",
     ]):
         return QueryIntent.trend_drift
-    if _matches_any(q, [r"\bcomplian\w*\b", r"\bwithin limits\b", r"\biso\s*\d+\b", r"\bconform\w*\b", r"\bwithin spec\b"]):
+    if _matches_any(q, [
+        r"\bcomplian\w*\b", r"\bwithin limits\b", r"\biso\s*\d+\b", r"\bconform\w*\b",
+        r"\bwithin spec\b", r"\bplausib\w*\b", r"\bstandard\b", r"\bguideline\w*\b",
+        r"\binternal limit\w*\b", r"\bacceptable range\b",
+    ]):
         return QueryIntent.validation_compliance
-    if _matches_any(q, [r"\bhypothesis\b", r"\binfluence\b", r"\beffect of\b", r"\bimpact of\b"]):
+    if _matches_any(q, [
+        r"\bhypothesis\b", r"\binfluence\b", r"\beffect of\b", r"\bimpact of\b",
+        r"\bif i change\b", r"\bhow does.*affect\b", r"\bcorrelat\w*\b", r"\brelationship\b",
+        r"\bparameter.*propert\b", r"\bpropert.*parameter\b",
+    ]):
         return QueryIntent.hypothesis
     if _matches_any(q, [r"\banomal\w*\b", r"\boutlier\w*\b", r"\babnormal\b", r"\bsuspicious\b"]):
         return QueryIntent.anomaly_check
@@ -160,10 +168,12 @@ def _extract_metrics(q: str) -> list[MetricSpec]:
                     uuid = candidate.get("uuid")
                     if uuid and uuid not in seen_uuids:
                         seen_uuids.add(uuid)
+                        unit_table_ids = candidate.get("unit_table_ids", [])
                         metrics.append(MetricSpec(
                             human_label=candidate.get("name", term),
                             resolved_uuid=uuid,
                             source_collection="values",
+                            canonical_channel=get_canonical_channel(unit_table_ids),
                         ))
             break  # Only match the first keyword hit
 
@@ -171,7 +181,8 @@ def _extract_metrics(q: str) -> list[MetricSpec]:
 
 
 def _infer_grouping_dimension(q: str, intent: QueryIntent) -> str | None:
-    if intent not in {QueryIntent.comparison, QueryIntent.summary, QueryIntent.hypothesis}:
+    if intent not in {QueryIntent.comparison, QueryIntent.summary, QueryIntent.hypothesis,
+                      QueryIntent.validation_compliance}:
         return None
     q_lower = q.lower()
     if re.search(r"\bcustomer\b|\bcompan\w*\b", q_lower):
@@ -221,14 +232,14 @@ def _build_plan_heuristic(question: str, context: dict[str, Any] | None = None) 
 
     if intent == QueryIntent.trend_drift:
         time_interval = "day"
-        x_axis = "uploadDate"
-        y_axis = metrics[0].human_label if metrics else "value"
+        x_axis = "date"        # flattenRow extracts _id.date → "date"
+        y_axis = "avg_value"   # computed by linear_regression pipeline
     elif intent in {QueryIntent.comparison, QueryIntent.hypothesis}:
-        x_axis = grouping or "group"
-        y_axis = metrics[0].human_label if metrics else "value"
+        x_axis = "_id"         # MongoDB $group always outputs _id
+        y_axis = "mean"        # computed by welch_t_test / std_dev pipeline
     elif intent == QueryIntent.anomaly_check:
-        x_axis = "index"
-        y_axis = metrics[0].human_label if metrics else "value"
+        x_axis = "_id"
+        y_axis = "mean"
 
     return QueryPlannerSchema(
         query_intent=intent,
@@ -296,6 +307,7 @@ def _validate_and_normalize_plan(raw: dict[str, Any], question: str) -> QueryPla
                     human_label=str(label),
                     resolved_uuid=str(uuid),
                     source_collection="values" if src not in {"tests", "values"} else src,
+                    canonical_channel=get_canonical_channel_for_uuid(str(uuid)),
                 ))
 
         # analytical_engine

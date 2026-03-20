@@ -1,7 +1,8 @@
 import { useState, useRef, useEffect } from "react";
-import { motion, AnimatePresence } from "framer-motion";
-import { Send, Bot, User, Loader2, Sparkles } from "lucide-react";
+import { motion } from "framer-motion";
+import { Send, Bot, User, Loader2, Sparkles, Mic, MicOff } from "lucide-react";
 import ReactMarkdown from "react-markdown";
+import { useSpeechRecognition } from "@/hooks/useSpeechRecognition";
 
 export interface ChatMessage {
   id: string;
@@ -9,7 +10,6 @@ export interface ChatMessage {
   content: string;
   timestamp: Date;
   chartConfig?: ChartConfig;
-  
   reasoning?: ReasoningData;
   followUps?: string[];
 }
@@ -52,15 +52,47 @@ export function ChatPanel({ messages, isLoading, onSendMessage, onFollowUp }: Ch
   const [input, setInput] = useState("");
   const endRef = useRef<HTMLDivElement>(null);
 
+  const {
+    transcript,
+    interimTranscript,
+    status,
+    error: micError,
+    isSupported: micSupported,
+    start: startListening,
+    stop: stopListening,
+    reset: resetTranscript,
+  } = useSpeechRecognition();
+
   useEffect(() => {
     endRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages, isLoading]);
+
+  const isListening = status === "listening" || status === "processing";
 
   const handleSend = () => {
     if (!input.trim() || isLoading) return;
     onSendMessage(input.trim());
     setInput("");
   };
+
+  const handleMicClick = () => {
+    if (isListening) {
+      stopListening();
+    } else {
+      startListening();
+    }
+  };
+
+  useEffect(() => {
+    if (transcript) {
+      setInput((prev) => {
+        const trimmed = transcript.trim();
+        if (!trimmed) return prev;
+        return prev.trim() ? `${prev.trim()} ${trimmed}` : trimmed;
+      });
+      resetTranscript();
+    }
+  }, [transcript, resetTranscript]);
 
   return (
     <div className="flex flex-col h-full">
@@ -166,9 +198,38 @@ export function ChatPanel({ messages, isLoading, onSendMessage, onFollowUp }: Ch
 
       {/* Input */}
       <div className="border-t border-border p-3">
+        {/* Mic error */}
+        {micError && (
+          <div className="mb-2 px-2 text-xs text-chart-red bg-chart-red/5 border border-chart-red/10 rounded-md py-1.5">
+            {micError}
+          </div>
+        )}
+
         <div className="flex items-center gap-2 bg-secondary rounded-xl px-3 py-1 focus-within:ring-1 focus-within:ring-primary/50 transition-all">
+          {micSupported ? (
+            <button
+              onClick={handleMicClick}
+              disabled={isLoading}
+              title={isListening ? "Stop recording" : "Start voice input"}
+              className={`shrink-0 p-2 rounded-lg transition-all ${
+                isListening
+                  ? "bg-chart-red/20 text-chart-red animate-pulse"
+                  : "text-muted-foreground hover:text-foreground"
+              }`}
+            >
+              {isListening ? <MicOff className="w-4 h-4" /> : <Mic className="w-4 h-4" />}
+            </button>
+          ) : (
+            <div
+              title="Speech recognition not supported in this browser"
+              className="shrink-0 p-2 rounded-lg text-muted-foreground/30"
+            >
+              <Mic className="w-4 h-4" />
+            </div>
+          )}
+
           <input
-            value={input}
+            value={input + (interimTranscript ? ` ${interimTranscript}` : "")}
             onChange={(e) => setInput(e.target.value)}
             onKeyDown={(e) => e.key === "Enter" && !e.shiftKey && handleSend()}
             placeholder="Ask about your test data..."

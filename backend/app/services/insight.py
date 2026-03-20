@@ -40,7 +40,15 @@ def _follow_ups_for_intent(intent: QueryIntent) -> list[str]:
         return [
             "List only records that violate the limit.",
             "Show compliance by machine.",
-            "Generate a compliance summary.",
+            "Check a different material against the same standard.",
+            "Generate a compliance summary report.",
+        ]
+    if intent == QueryIntent.hypothesis:
+        return [
+            "Show the correlation between a different pair of parameters.",
+            "Filter to a specific customer or machine to narrow the hypothesis.",
+            "Run a trend analysis to see if the relationship changes over time.",
+            "Compare influence across different material types.",
         ]
     if intent == QueryIntent.anomaly_check:
         return [
@@ -85,8 +93,11 @@ def _unique_values(rows: list[dict[str, Any]], field: str, limit: int = 5) -> li
 def _build_summary_sentences(
     plan: QueryPlannerSchema,
     rows: list[dict[str, Any]],
+    stats: dict[str, Any] | None = None,
 ) -> list[str]:
     """Return exactly 3 data-driven summary sentences."""
+    if stats is None:
+        stats = {}
     row_count = len(rows)
     intent = plan.query_intent
 
@@ -165,9 +176,35 @@ def _build_summary_sentences(
         return [s1, s2, s3]
 
     if intent == QueryIntent.validation_compliance:
+        compliance = stats.get("compliance", {}) if isinstance(stats, dict) else {}
         s1 = f"Compliance check completed on {row_count} result group(s)."
-        s2 = "Standard deviation and mean values have been computed for each group."
-        s3 = "Review the compliance badge to identify groups that may violate specified limits."
+        if compliance.get("summary"):
+            s2 = compliance["summary"]
+        else:
+            s2 = "Standard deviation and mean values have been computed for each group."
+        overall = compliance.get("overall_pass")
+        if overall is True:
+            s3 = "All measured groups are within acceptable limits for the referenced standard."
+        elif overall is False:
+            failing = [g["group"] for g in compliance.get("groups", []) if g.get("status") == "fail"]
+            s3 = f"Violations detected in: {', '.join(failing[:5])}. Review the compliance badge for details."
+        else:
+            s3 = "Review the compliance badge to identify groups that may violate specified limits."
+        return [s1, s2, s3]
+
+    if intent == QueryIntent.hypothesis:
+        corr = stats.get("correlation", {}) if isinstance(stats, dict) else {}
+        s1 = f"Hypothesis analysis applied across {row_count} group(s)."
+        if corr.get("interpretation"):
+            s2 = corr["interpretation"]
+        else:
+            s2 = "Statistical relationship between parameters has been evaluated."
+        ranked = stats.get("ranked_groups", []) if isinstance(stats, dict) else []
+        if ranked:
+            top = ranked[0]
+            s3 = f"Top-performing group: {top.get('_id', 'N/A')} (mean={top.get('mean', 0):.4g})."
+        else:
+            s3 = "Review the scatter plot to identify parameter influence patterns."
         return [s1, s2, s3]
 
     if intent == QueryIntent.summary:
@@ -193,7 +230,7 @@ def _build_insight_mock(
     row_count = len(rows)
     anomalies = stats.get("anomalies", []) if isinstance(stats, dict) else []
 
-    summary = _build_summary_sentences(plan, rows)
+    summary = _build_summary_sentences(plan, rows, stats if isinstance(stats, dict) else {})
 
     anomaly_notes: list[str] = []
     if isinstance(anomalies, list) and anomalies:
@@ -309,9 +346,13 @@ def _build_insight_llm(
             "title": str(chart_raw.get("title") or fallback.chart_config.get("title", "Results")).strip(),
         }
         if chart_type != "table":
-            for key, target_key in [("xKey", "xKey"), ("x", "xKey"), ("yKey", "yKey"), ("y", "yKey")]:
-                if chart_raw.get(key):
-                    chart_config[target_key] = str(chart_raw[key])
+            for src_key, target_key in [("xKey", "xKey"), ("x", "xKey")]:
+                if chart_raw.get(src_key):
+                    chart_config["xKey"] = str(chart_raw[src_key])
+                    break
+            for src_key, target_key in [("yKey", "yKey"), ("y", "yKey")]:
+                if chart_raw.get(src_key):
+                    chart_config["yKey"] = str(chart_raw[src_key])
                     break
     else:
         chart_config = fallback.chart_config

@@ -81,9 +81,44 @@ function getChartData(chart: ChartConfig): { data: Record<string, unknown>[]; xK
     };
   }
   const flat = rows.map(flattenRow);
-  const xKey = chart.xKey === "_id" ? "_id" : (chart.xKey ?? (flat[0]?.date ? "date" : flat[0]?._id ? "_id" : "_index"));
-  const yKey = chart.yKey ?? (flat[0]?.avg_value ? "avg_value" : flat[0]?.mean ? "mean" : flat[0]?.force ? "force" : "_index");
-  return { data: flat, xKey, yKey };
+
+  // Resolve xKey: prefer chart.xKey if it exists in data, otherwise auto-detect
+  const X_FALLBACK_ORDER = ["date", "group", "_id", "_index"] as const;
+  let xKey = chart.xKey ?? "_index";
+  if (flat.length > 0 && flat[0][xKey] === undefined) {
+    // chart.xKey doesn't exist in data — pick first key that does
+    xKey = X_FALLBACK_ORDER.find(k => flat[0][k] !== undefined) ?? "_index";
+  } else if (xKey === "_id" && flat.length > 0) {
+    // "_id" is valid but prefer "date" or "group" if they exist
+    if (flat[0].date !== undefined) xKey = "date";
+    else if (flat[0].group !== undefined) xKey = "group";
+  }
+
+  // Resolve yKey: prefer chart.yKey if it exists in data, otherwise auto-detect from known fields
+  const Y_FALLBACK_ORDER = ["avg_value", "mean", "doc_avg", "force", "total"];
+  let yKey = chart.yKey ?? "";
+  if (!yKey || (flat.length > 0 && flat[0][yKey] === undefined)) {
+    yKey = Y_FALLBACK_ORDER.find(k => flat.length > 0 && flat[0][k] !== undefined) ?? "";
+  }
+
+  // If no meaningful y-axis data found, fall through to static default chart
+  if (!yKey) {
+    const defaults = chart.type === "bar" ? DEFAULT_COMPARISON : chart.type === "line" ? DEFAULT_TREND : DEFAULT_FORCE_STRAIN;
+    return { data: defaults as Record<string, unknown>[], xKey: chart.xKey ?? "name", yKey: chart.yKey ?? "force" };
+  }
+
+  // Filter out rows with null/invalid x values for line/area charts
+  const filteredFlat = chart.type === "line" || chart.type === "area"
+    ? flat.filter(r => r[xKey] !== undefined && r[xKey] !== "null" && r[xKey] !== null && r[xKey] !== "")
+    : flat;
+
+  // If filtering removed all rows (e.g. no valid dates), fall back to static default
+  if (!filteredFlat.length) {
+    const defaults = chart.type === "bar" ? DEFAULT_COMPARISON : chart.type === "line" ? DEFAULT_TREND : DEFAULT_FORCE_STRAIN;
+    return { data: defaults as Record<string, unknown>[], xKey: chart.xKey ?? "name", yKey: chart.yKey ?? "force" };
+  }
+
+  return { data: filteredFlat, xKey, yKey };
 }
 
 export function ChartDisplay({ chart, onGenerateReport }: ChartDisplayProps) {

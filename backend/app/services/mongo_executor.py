@@ -151,11 +151,26 @@ class MongoExecutor:
         op = plan.analytical_engine.operation
         grouping_dim = plan.analytical_engine.grouping_dimension
 
-        # 1. Filter by metric UUID (metadata.childId regex)
+        # 1. Filter by metric UUID + canonical channel (e.g. "Force" not "Stress" or "ForcePerTiter")
+        # childId format: {UUID}-Zwick.Unittable.{Channel}.{UUID}-Zwick.Unittable.{Channel}_Value
         if plan.data_resolution.metrics:
-            uuids = [m.resolved_uuid for m in plan.data_resolution.metrics if m.resolved_uuid]
-            if uuids:
-                regex_pattern = "|".join(re.escape(u) for u in uuids)
+            channel_patterns: list[str] = []
+            uuid_only_patterns: list[str] = []
+            for m in plan.data_resolution.metrics:
+                if not m.resolved_uuid:
+                    continue
+                if m.canonical_channel:
+                    # Anchor with ^ so MongoDB can use the childId index for a range scan.
+                    # childId always starts with {UUID}, so ^ is safe and correct.
+                    channel_patterns.append(
+                        r"^\{" + re.escape(m.resolved_uuid) + r"\}-Zwick\.Unittable\." + re.escape(m.canonical_channel) + r"\."
+                    )
+                else:
+                    uuid_only_patterns.append(r"^\{?" + re.escape(m.resolved_uuid))
+
+            all_patterns = channel_patterns + uuid_only_patterns
+            if all_patterns:
+                regex_pattern = "|".join(all_patterns)
                 pipeline.append({
                     "$match": {"metadata.childId": {"$regex": regex_pattern, "$options": "i"}}
                 })
@@ -167,10 +182,12 @@ class MongoExecutor:
             if match:
                 pipeline.append({"$match": match})
 
-        # 3. Lookup tests collection if needed for test-scope filters or grouping
+        # 3. Lookup tests collection if needed for test-scope filters, grouping, or trend dates.
+        # linear_regression always needs the join: uploadDate is the import date (same for all
+        # docs) so TestParametersFlat.Date (the actual test date) is required for meaningful trends.
         test_filters = [f for f in plan.data_resolution.filters if _is_tests_scope(f.field_path)]
         grouping_needs_test = bool(grouping_dim) and _is_tests_scope(grouping_dim or "")
-        needs_test_join = bool(test_filters) or grouping_needs_test
+        needs_test_join = bool(test_filters) or grouping_needs_test or op == AnalyticalOperation.linear_regression
 
         if needs_test_join:
             pipeline.extend([
@@ -281,18 +298,38 @@ class MongoExecutor:
                 {"$gt": ["$doc_avg", -1e15]},
                 {"$lt": ["$doc_avg", 1e15]},
             ]}}})
-            # Group by time bucket
+            # Group by time bucket.
+            # Use the actual test date (TestParametersFlat.Date = "DD.MM.YYYY") when the
+            # _tests join is present — uploadDate is the import date (same for all docs).
+            # Fall back to uploadDate only when no join was performed.
             interval = plan.analytical_engine.time_series_interval or "week"
+            if needs_test_join:
+                # $dateFromString throws if the input is not a string (e.g. missing field,
+                # ISODate object, number). Wrap in $convert→string first so the input to
+                # $dateFromString is always a string or ""; then onError/onNull handle the rest.
+                date_expr = {
+                    "$dateFromString": {
+                        "dateString": {
+                            "$convert": {
+                                "input": "$test.TestParametersFlat.Date",
+                                "to": "string",
+                                "onError": "",
+                                "onNull": "",
+                            }
+                        },
+                        "format": "%d.%m.%Y",
+                        "onError": None,
+                        "onNull": None,
+                    }
+                }
+            else:
+                # uploadDate is stored as a native ISODate — use it directly.
+                date_expr = "$uploadDate"
             group_id: Any = {
                 "date": {
                     "$dateToString": {
                         "format": "%Y-%m-%d" if interval == "day" else "%Y-%W",
-                        "date": {
-                            "$dateFromString": {
-                                "dateString": {"$substr": [{"$toString": "$uploadDate"}, 0, 19]},
-                                "onError": None,
-                            }
-                        },
+                        "date": date_expr,
                     }
                 }
             }
@@ -304,6 +341,8 @@ class MongoExecutor:
                 "avg_value": {"$avg": "$doc_avg"},
                 "count": {"$sum": 1},
             }})
+            # Drop buckets where date parsed to null (missing/invalid date field)
+            pipeline.append({"$match": {"_id.date": {"$ne": None}}})
             pipeline.append({"$sort": {"_id.date": 1}})
             pipeline.append({"$limit": min(500, self.settings.max_query_rows)})
 
@@ -494,49 +533,14 @@ class MongoExecutor:
                     corrected_from_previous=False,
                 ))
 
-                # Emergency fallback: simple tests fetch
-                fallback_pipeline: list[dict[str, Any]] = [
-                    {"$project": {"_id": 1, "name": 1, "state": 1, "TestParametersFlat": 1}},
-                    {"$limit": 50},
-                ]
-                try:
-                    tests_coll = db[self.settings.mongo_collection_tests]
-                    cursor = tests_coll.aggregate(fallback_pipeline, allowDiskUse=True)
-                    fallback_rows = [_to_json_safe(row) for row in cursor]
-                    fallback_rows = fallback_rows[: self.settings.max_query_rows]
-
-                    fallback_candidate = MongoQueryCandidate(
-                        collection=CollectionName.tests,
-                        pipeline=fallback_pipeline,
-                        explanation="Emergency fallback pipeline after query error.",
-                        expected_shape=["_id", "name", "state", "TestParametersFlat"],
-                    )
-                    attempts.append(QueryAttempt(
-                        attempt=2,
-                        pipeline=fallback_pipeline,
-                        error=None,
-                        corrected_from_previous=True,
-                    ))
-                    return QueryRunResponse(
-                        status="success",
-                        candidate=fallback_candidate,
-                        attempts=attempts,
-                        row_count=len(fallback_rows),
-                        rows=fallback_rows,
-                        corrected_automatically=True,
-                    )
-                except Exception as fallback_exc:  # noqa: BLE001
-                    attempts.append(QueryAttempt(
-                        attempt=2,
-                        pipeline=fallback_pipeline,
-                        error=str(fallback_exc),
-                        corrected_from_previous=True,
-                    ))
-                    return QueryRunResponse(
-                        status="failed",
-                        candidate=candidate,
-                        attempts=attempts,
-                        row_count=0,
-                        rows=[],
-                        corrected_automatically=False,
-                    )
+                # Return empty rows — the insight engine will report "no data found".
+                # Previously this ran a 50-test fallback fetch which returned irrelevant
+                # test docs that the insight LLM mistakenly described as real answers.
+                return QueryRunResponse(
+                    status="failed",
+                    candidate=candidate,
+                    attempts=attempts,
+                    row_count=0,
+                    rows=[],
+                    corrected_automatically=False,
+                )

@@ -7,6 +7,38 @@ import numpy as np
 from fastapi import FastAPI, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
+from fastapi.encoders import jsonable_encoder as _orig_encoder
+import fastapi.encoders
+
+
+class _NumpyEncoder(json.JSONEncoder):
+    """Serialize numpy scalars and arrays to native Python types."""
+
+    def default(self, o: Any) -> Any:
+        if isinstance(o, np.bool_):
+            return bool(o)
+        if isinstance(o, np.integer):
+            return int(o)
+        if isinstance(o, np.floating):
+            return float(o)
+        if isinstance(o, np.ndarray):
+            return o.tolist()
+        if isinstance(o, np.bytes_):
+            return o.decode("utf-8", errors="replace")
+        if isinstance(o, np.datetime64):
+            return str(o)
+        return super().default(o)
+
+
+def _jsonable_encoder(obj: Any) -> Any:
+    return _orig_encoder(obj, custom_encoder={
+        type(np.bool_()): lambda v: bool(v),
+        type(np.int64()): lambda v: int(v),
+        type(np.float64()): lambda v: float(v),
+    })
+
+
+fastapi.encoders.jsonable_encoder = _jsonable_encoder
 
 from .config import get_settings
 from .schemas import (
@@ -27,6 +59,7 @@ from .services.semantic_mapper import SemanticMapper
 from .services.stats_engine import StatsEngine
 from .services.db_client import DatabaseClient
 from .services.query_store import save_query, list_templates
+from .services.compliance_engine import check_compliance
 
 # Person 3's LLM Handlers
 from .services.insight import build_insight
@@ -49,9 +82,27 @@ def _safe_floats(values: list[Any]) -> list[float]:
     return [v for v in values if isinstance(v, (int, float)) and not math.isnan(v) and not math.isinf(v)]
 
 
+def _numpy_safe(obj: Any) -> Any:
+    """Recursively convert numpy scalars/arrays to native Python types for Pydantic v2 serialization."""
+    if isinstance(obj, dict):
+        return {k: _numpy_safe(v) for k, v in obj.items()}
+    if isinstance(obj, list):
+        return [_numpy_safe(v) for v in obj]
+    if isinstance(obj, np.bool_):
+        return bool(obj)
+    if isinstance(obj, np.integer):
+        return int(obj)
+    if isinstance(obj, np.floating):
+        return float(obj)
+    if isinstance(obj, np.ndarray):
+        return obj.tolist()
+    return obj
+
+
 def _compute_stats(plan: QueryPlannerSchema, rows: list[dict[str, Any]]) -> dict[str, Any]:
     """Run StatsEngine methods appropriate for the query operation."""
     op = plan.analytical_engine.operation
+    intent = plan.query_intent
     result: dict[str, Any] = {}
 
     if op == AnalyticalOperation.linear_regression:
@@ -59,6 +110,10 @@ def _compute_stats(plan: QueryPlannerSchema, rows: list[dict[str, Any]]) -> dict
         series = _safe_floats([r.get("avg_value") for r in rows])
         if len(series) >= 2:
             result["drift"] = stats.calculate_drift(series)
+            # Hypothesis: if multiple groups exist in trend data, correlate them
+            if intent == QueryIntent.hypothesis and len(series) >= 3:
+                x_idx = list(range(len(series)))
+                result["correlation"] = stats.compute_correlation(x_idx, series)
 
     elif op in {AnalyticalOperation.welch_t_test, AnalyticalOperation.standard_deviation,
                 AnalyticalOperation.iqr_outlier}:
@@ -80,6 +135,19 @@ def _compute_stats(plan: QueryPlannerSchema, rows: list[dict[str, Any]]) -> dict
                     "difference": round(g1[0] - g2[0], 4),
                     "pct_difference": round(abs(g1[0] - g2[0]) / max(g1[0], g2[0]) * 100, 2) if max(g1[0], g2[0]) else 0,
                 }
+
+        # Hypothesis: correlate std deviation with mean across groups (parameter sensitivity proxy)
+        if intent == QueryIntent.hypothesis and len(rows) >= 3:
+            means_h = _safe_floats([r.get("mean") for r in rows])
+            stds_h = _safe_floats([r.get("stdDev") for r in rows])
+            if len(means_h) >= 3 and len(stds_h) >= 3:
+                result["correlation"] = stats.compute_correlation(means_h, stds_h)
+                result["correlation"]["x_label"] = "mean"
+                result["correlation"]["y_label"] = "std_dev"
+
+        # Rank groups by performance (useful for hypothesis and comparison)
+        if intent in {QueryIntent.hypothesis, QueryIntent.comparison} and rows:
+            result["ranked_groups"] = stats.rank_groups_by_performance(rows, "mean")
 
     return result
 
@@ -206,10 +274,20 @@ def process_query(req: PlannerRequest) -> InsightResponse:
             audit_log=["Plan created but execution failed."]
         )
 
-    stats_output = _compute_stats(plan, run_resp.rows)
+    stats_output = _numpy_safe(_compute_stats(plan, run_resp.rows))
+
+    # Compliance check for validation_compliance intent
+    compliance: dict[str, Any] = {}
+    if plan.query_intent == QueryIntent.validation_compliance and run_resp.rows:
+        metric_labels = [m.human_label for m in plan.data_resolution.metrics]
+        directive = plan.ui_rendering_contract.summary_text_directive
+        compliance = _numpy_safe(check_compliance(run_resp.rows, metric_labels, directive))
+        stats_output["compliance"] = compliance
+
     final_insight = build_insight(plan, run_resp.rows, stats_output)
     final_insight.x_values, final_insight.y_values = _extract_chart_data(plan, run_resp.rows)
     final_insight.stats_summary = stats_output
+    final_insight.compliance_result = compliance
     _apply_anomaly_alerts(final_insight, stats_output)
 
     # Auto-save successful queries as reusable templates
@@ -252,7 +330,7 @@ def query_stream(question: str = Query(..., min_length=3)):
             return
 
         yield _event({"stage": "insight", "status": "started"})
-        stats_output = _compute_stats(plan, run_resp.rows)
+        stats_output = _numpy_safe(_compute_stats(plan, run_resp.rows))
         insight = build_insight(plan, run_resp.rows, stats_output)
         insight.x_values, insight.y_values = _extract_chart_data(plan, run_resp.rows)
         insight.stats_summary = stats_output
