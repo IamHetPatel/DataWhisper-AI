@@ -1,4 +1,4 @@
-# START-Hack 2026
+# DataWhisper-AI
 
 AI-powered data analytics dashboard with natural language query capabilities.
 
