@@ -135,7 +135,7 @@ export function ReportModal({ open, onClose, reasoning, chart }: ReportModalProp
                           <tbody className="divide-y divide-border">
                             {(chart.data || []).slice(0, 50).map((row, i) => (
                               <tr key={i} className="hover:bg-muted/20 transition-colors">
-                                {Object.values(row).map((val: any, j) => (
+                                {Object.values(row).map((val: unknown, j) => (
                                   <td key={j} className="px-4 py-2 text-foreground truncate max-w-[250px]">
                                     {typeof val === "number" ? parseFloat(val.toFixed(4)).toString() : String(val ?? "-")}
                                   </td>

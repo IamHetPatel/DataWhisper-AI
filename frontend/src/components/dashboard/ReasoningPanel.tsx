@@ -3,6 +3,7 @@ import {
   Brain, Database, Ruler, BarChart3, LineChart,
   ChevronRight, AlertTriangle, Lightbulb, ClipboardList,
   PanelRightClose, PanelRight,
+  type LucideIcon,
 } from "lucide-react";
 import type { ReasoningData } from "./ChatPanel";
 
@@ -138,7 +139,7 @@ export function ReasoningPanel({ reasoning, collapsed, onToggle }: ReasoningPane
   );
 }
 
-function Section({ icon: Icon, label, value, color }: { icon: any; label: string; value: string; color: string }) {
+function Section({ icon: Icon, label, value, color }: { icon: LucideIcon; label: string; value: string; color: string }) {
   return (
     <div className="space-y-1">
       <div className={`flex items-center gap-1.5 text-xs font-medium ${color}`}>

@@ -17,7 +17,7 @@ export interface ChatMessage {
 export interface ChartConfig {
   type: "line" | "bar" | "scatter" | "table";
   title: string;
-  data: any[];
+  data: Record<string, unknown>[];
   xKey?: string;
   yKey?: string;
 }
